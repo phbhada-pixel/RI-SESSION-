@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CalendarPlus, Lock, Unlock, CheckSquare, Search, ClipboardCheck } from 'lucide-react';
+import { CalendarPlus, Lock, Unlock, CheckSquare, Search, ClipboardCheck, ClipboardList } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useSheetData } from '../context/SheetDataContext';
 import { SessionCategory, SessionStatus, SessionType, VaccinationSession } from '../types';
@@ -554,6 +554,12 @@ export const SessionManagementPage: React.FC = () => {
                         className="inline-flex items-center gap-1 text-xs font-medium text-slate-800 hover:underline"
                       >
                         <CheckSquare className="w-3.5 h-3.5" /> टिकमार्क शीट
+                      </Link>
+                      <Link
+                        to={`/ri-checklist?sessionId=${s.id}`}
+                        className="inline-flex items-center gap-1 text-xs font-medium text-teal-700 hover:underline"
+                      >
+                        <ClipboardList className="w-3.5 h-3.5" /> RI चेकलिस्ट
                       </Link>
                       {win.isOpen && s.status === 'नियोजित' && (
                         <button

@@ -5,6 +5,9 @@ import {
   BeneficiaryType,
   MaternalServiceRecord,
   PregnancyEpisode,
+  RiChecklist,
+  RiLogisticAvailability,
+  RiVaccineStatusEntry,
   SessionBeneficiary,
   SheetDatabase,
   StaffMember,
@@ -37,6 +40,7 @@ export const SHEET_TABS = [
   'vaccineSchedule',
   'vaccinationRecords',
   'maternalServiceRecords',
+  'riChecklists',
   'auditLogs',
   'systemSettings',
 ] as const;
@@ -211,6 +215,67 @@ export const TAB_COLUMNS: Record<SheetTabName, string[]> = {
     'staffId',
     'staffName',
     'remarks',
+    'createdAt',
+    'updatedAt',
+  ],
+  riChecklists: [
+    'id',
+    'checklistCode',
+    'sessionId',
+    'sessionCode',
+    'monitorName',
+    'organization',
+    'organizationOther',
+    'designation',
+    'monitoringDate',
+    'state',
+    'district',
+    'blockUlb',
+    'planningUnit',
+    'setting',
+    'subcentreId',
+    'subcentreName',
+    'villageId',
+    'sessionSiteName',
+    'monitoringReasons',
+    'monitoringReasonOther',
+    'hraType',
+    'sessionSiteLocation',
+    'sessionSiteLocationOther',
+    'isSessionHeld',
+    'sessionNotHeldReason',
+    'sessionNotHeldReasonOther',
+    'dueListAvailable',
+    'mobilizersAssigned',
+    'dueListWithMobiliser',
+    'mobilizerMobilizing',
+    'polioHraTagged',
+    'vaccineDeliveredBy',
+    'vaccines',
+    'logistics',
+    'cuttingWithHubCutter',
+    'hubCutterNoReason',
+    'markingVialsDateTime',
+    'reconstitutedVialAfterLapsed',
+    'delivering4KeyMessages',
+    'advisingWait30Mins',
+    'caregiverInterviewNotObserved',
+    'caregiver1Mobilizer',
+    'caregiver2Mobilizer',
+    'caregiver3Mobilizer',
+    'minAge2ndMeasles',
+    'mctsRegisterMaintained',
+    'supervisorVisitedToday',
+    'supervisorVisitedOther',
+    'ashaPaymentPreviousSession',
+    'ashaPaymentFI',
+    'ashaPaymentCI',
+    'vaccineNotAvailableReason',
+    'vaccineNotAvailableOther',
+    'anmAbsentReason',
+    'anmAbsentOther',
+    'remarks',
+    'createdBy',
     'createdAt',
     'updatedAt',
   ],
@@ -693,6 +758,17 @@ function parseJsonObj(v: unknown): Record<string, unknown> | null {
   }
 }
 
+function parseJsonStringArray(v: unknown): string[] {
+  if (!v) return [];
+  if (Array.isArray(v)) return v.map(String);
+  try {
+    const parsed = JSON.parse(String(v));
+    return Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
 export function objectToRow(tab: SheetTabName, obj: Record<string, unknown>): (string | number | boolean)[] {
   const cols = TAB_COLUMNS[tab];
   return cols.map((col) => {
@@ -727,7 +803,7 @@ function rowsToObjects(tab: SheetTabName, matrix: string[][] | undefined): Recor
 
 export async function loadEntireSheetDatabase(spreadsheetId: string): Promise<SheetDatabase> {
   const { title, url } = await ensureSpreadsheetSchema(spreadsheetId);
-  const rangesParam = SHEET_TABS.map((t) => `ranges=${encodeURIComponent(`'${t}'!A:AZ`)}`).join('&');
+  const rangesParam = SHEET_TABS.map((t) => `ranges=${encodeURIComponent(`'${t}'!A:BZ`)}`).join('&');
   const data = await googleFetch<{
     valueRanges?: Array<{ range: string; values?: string[][] }>;
   }>(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchGet?${rangesParam}`);
@@ -745,6 +821,7 @@ export async function loadEntireSheetDatabase(spreadsheetId: string): Promise<Sh
     vaccineSchedule: [],
     vaccinationRecords: [],
     maternalServiceRecords: [],
+    riChecklists: [],
     auditLogs: [],
     systemSettings: [],
   };
@@ -1004,6 +1081,70 @@ export async function loadEntireSheetDatabase(spreadsheetId: string): Promise<Sh
     }))
     .sort((a, b) => a.visitDate.localeCompare(b.visitDate));
 
+  const riChecklists: RiChecklist[] = rawByTab.riChecklists
+    .map((r) => ({
+      id: r.id,
+      checklistCode: r.checklistCode,
+      sessionId: r.sessionId || '',
+      sessionCode: r.sessionCode || '',
+      monitorName: r.monitorName || '',
+      organization: (r.organization || 'Govt') as RiChecklist['organization'],
+      organizationOther: r.organizationOther || '',
+      designation: r.designation || '',
+      monitoringDate: r.monitoringDate || '',
+      state: r.state || 'महाराष्ट्र',
+      district: r.district || 'लातूर',
+      blockUlb: r.blockUlb || 'औसा',
+      planningUnit: r.planningUnit || 'प्राथमिक आरोग्य केंद्र भादा',
+      setting: (r.setting === 'Urban' ? 'Urban' : 'Rural') as RiChecklist['setting'],
+      subcentreId: r.subcentreId || '',
+      subcentreName: r.subcentreName || '',
+      villageId: r.villageId || '',
+      sessionSiteName: r.sessionSiteName || '',
+      monitoringReasons: parseJsonStringArray(r.monitoringReasons),
+      monitoringReasonOther: r.monitoringReasonOther || '',
+      hraType: r.hraType || '',
+      sessionSiteLocation: (r.sessionSiteLocation || 'Sub Centre') as RiChecklist['sessionSiteLocation'],
+      sessionSiteLocationOther: r.sessionSiteLocationOther || '',
+      isSessionHeld: (r.isSessionHeld === 'No' ? 'No' : 'Yes') as RiChecklist['isSessionHeld'],
+      sessionNotHeldReason: r.sessionNotHeldReason || '',
+      sessionNotHeldReasonOther: r.sessionNotHeldReasonOther || '',
+      dueListAvailable: (r.dueListAvailable || '') as RiChecklist['dueListAvailable'],
+      mobilizersAssigned: parseJsonStringArray(r.mobilizersAssigned),
+      dueListWithMobiliser: (r.dueListWithMobiliser || '') as RiChecklist['dueListWithMobiliser'],
+      mobilizerMobilizing: (r.mobilizerMobilizing || '') as RiChecklist['mobilizerMobilizing'],
+      polioHraTagged: (r.polioHraTagged || '') as RiChecklist['polioHraTagged'],
+      vaccineDeliveredBy: (r.vaccineDeliveredBy || '') as RiChecklist['vaccineDeliveredBy'],
+      vaccines: (parseJsonObj(r.vaccines) || {}) as Record<string, RiVaccineStatusEntry>,
+      logistics: (parseJsonObj(r.logistics) || {}) as Record<string, RiLogisticAvailability>,
+      cuttingWithHubCutter: (r.cuttingWithHubCutter || '') as RiChecklist['cuttingWithHubCutter'],
+      hubCutterNoReason: r.hubCutterNoReason || '',
+      markingVialsDateTime: (r.markingVialsDateTime || '') as RiChecklist['markingVialsDateTime'],
+      reconstitutedVialAfterLapsed: parseJsonStringArray(r.reconstitutedVialAfterLapsed),
+      delivering4KeyMessages: (r.delivering4KeyMessages || '') as RiChecklist['delivering4KeyMessages'],
+      advisingWait30Mins: (r.advisingWait30Mins || '') as RiChecklist['advisingWait30Mins'],
+      caregiverInterviewNotObserved: parseBool(r.caregiverInterviewNotObserved),
+      caregiver1Mobilizer: parseJsonStringArray(r.caregiver1Mobilizer),
+      caregiver2Mobilizer: parseJsonStringArray(r.caregiver2Mobilizer),
+      caregiver3Mobilizer: parseJsonStringArray(r.caregiver3Mobilizer),
+      minAge2ndMeasles: (r.minAge2ndMeasles || '') as RiChecklist['minAge2ndMeasles'],
+      mctsRegisterMaintained: (r.mctsRegisterMaintained || '') as RiChecklist['mctsRegisterMaintained'],
+      supervisorVisitedToday: (r.supervisorVisitedToday || '') as RiChecklist['supervisorVisitedToday'],
+      supervisorVisitedOther: r.supervisorVisitedOther || '',
+      ashaPaymentPreviousSession: (r.ashaPaymentPreviousSession || '') as RiChecklist['ashaPaymentPreviousSession'],
+      ashaPaymentFI: (r.ashaPaymentFI || '') as RiChecklist['ashaPaymentFI'],
+      ashaPaymentCI: (r.ashaPaymentCI || '') as RiChecklist['ashaPaymentCI'],
+      vaccineNotAvailableReason: (r.vaccineNotAvailableReason || '') as RiChecklist['vaccineNotAvailableReason'],
+      vaccineNotAvailableOther: r.vaccineNotAvailableOther || '',
+      anmAbsentReason: (r.anmAbsentReason || '') as RiChecklist['anmAbsentReason'],
+      anmAbsentOther: r.anmAbsentOther || '',
+      remarks: r.remarks || '',
+      createdBy: r.createdBy || '',
+      createdAt: r.createdAt || '',
+      updatedAt: r.updatedAt || '',
+    }))
+    .sort((a, b) => b.monitoringDate.localeCompare(a.monitoringDate) || b.createdAt.localeCompare(a.createdAt));
+
   const auditLogs: AuditLog[] = rawByTab.auditLogs
     .map((r) => ({
       id: r.id,
@@ -1048,6 +1189,7 @@ export async function loadEntireSheetDatabase(spreadsheetId: string): Promise<Sh
     vaccineSchedule,
     vaccinationRecords,
     maternalServiceRecords,
+    riChecklists,
     auditLogs,
     systemSettings,
   };
@@ -1076,7 +1218,7 @@ export async function rewriteSheetTab(
 ): Promise<void> {
   // Clear existing range first, then write headers + rows atomically
   await googleFetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`'${tab}'!A:AZ`)}:clear`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`'${tab}'!A:BZ`)}:clear`,
     { method: 'POST' }
   );
 

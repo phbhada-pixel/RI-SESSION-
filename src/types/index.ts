@@ -267,6 +267,7 @@ export type AuditEntityType =
   | 'SESSION'
   | 'VACCINATION'
   | 'MATERNAL_SERVICE'
+  | 'RI_CHECKLIST'
   | 'SUBCENTRE'
   | 'VILLAGE'
   | 'STAFF'
@@ -275,6 +276,87 @@ export type AuditEntityType =
   | 'USER'
   | 'SETTINGS'
   | 'SHEET_IMPORT';
+
+export interface RiVaccineStatusEntry {
+  availability: 'NA' | 'No' | 'Inadequate' | 'Adequate' | '';
+  openVialReissued?: 'Yes' | 'No' | '';
+}
+
+export type RiLogisticAvailability = 'No' | 'Inadequate' | 'Adequate' | '';
+
+export interface RiChecklist {
+  id: string;
+  checklistCode: string; // e.g., PHCB-RI-20261117-001
+  sessionId?: string;
+  sessionCode?: string;
+  monitorName: string;
+  organization: 'WHO' | 'Govt' | 'UNICEF' | 'IPE' | 'Others';
+  organizationOther?: string;
+  designation: string;
+  monitoringDate: string; // ISO YYYY-MM-DD
+  state: string;
+  district: string;
+  blockUlb: string;
+  planningUnit: string;
+  setting: 'Rural' | 'Urban';
+  subcentreId: string;
+  subcentreName: string;
+  villageId: string;
+  sessionSiteName: string;
+  monitoringReasons: string[];
+  monitoringReasonOther?: string;
+  hraType: string;
+  sessionSiteLocation:
+    | 'Distt. Hospital'
+    | 'CHC'
+    | 'PHC'
+    | 'Sub Centre'
+    | 'ICDS Centre'
+    | 'Others';
+  sessionSiteLocationOther?: string;
+  // Q1
+  isSessionHeld: 'Yes' | 'No';
+  sessionNotHeldReason?: string;
+  sessionNotHeldReasonOther?: string;
+  // Q2-Q7
+  dueListAvailable: 'No list' | 'List not updated' | 'Updated list' | '';
+  mobilizersAssigned: string[];
+  dueListWithMobiliser: 'Yes' | 'No' | 'Not Observed' | 'Not Applicable' | '';
+  mobilizerMobilizing: 'Yes' | 'No' | 'Not Applicable' | '';
+  polioHraTagged: 'Yes' | 'No' | 'Not Applicable' | '';
+  vaccineDeliveredBy: 'ANM' | 'AVD' | 'Teeka Express' | 'Others' | '';
+  // Q8 & Q9
+  vaccines: Record<string, RiVaccineStatusEntry>;
+  logistics: Record<string, RiLogisticAvailability>;
+  // Q10-Q15
+  cuttingWithHubCutter: 'Yes' | 'No' | 'Not Observed' | '';
+  hubCutterNoReason?: string;
+  markingVialsDateTime: 'Yes' | 'No' | '';
+  reconstitutedVialAfterLapsed: string[];
+  delivering4KeyMessages: 'Yes' | 'No' | 'Not Observed' | '';
+  advisingWait30Mins: 'Yes' | 'No' | 'Not Observed' | '';
+  caregiverInterviewNotObserved: boolean;
+  caregiver1Mobilizer: string[];
+  caregiver2Mobilizer: string[];
+  caregiver3Mobilizer: string[];
+  // Q16-Q20
+  minAge2ndMeasles: '9-12m' | '16-24m' | 'any other age' | '';
+  mctsRegisterMaintained: 'Yes' | 'No' | 'Not Observed' | '';
+  supervisorVisitedToday: 'Health Supervisor' | 'MO' | 'None' | 'Others' | '';
+  supervisorVisitedOther?: string;
+  ashaPaymentPreviousSession: 'Yes' | 'No' | 'Not applicable' | '';
+  ashaPaymentFI: 'Yes' | 'No' | 'Partial' | 'NA' | '';
+  ashaPaymentCI: 'Yes' | 'No' | 'Partial' | 'NA' | '';
+  // Q21-Q22
+  vaccineNotAvailableReason: 'Stock out' | 'No AVD' | 'Others' | '';
+  vaccineNotAvailableOther?: string;
+  anmAbsentReason: 'Post got vacant' | 'On leave' | 'Others' | '';
+  anmAbsentOther?: string;
+  remarks?: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface AuditLog {
   id: string;
@@ -318,6 +400,7 @@ export interface SheetDatabase {
   vaccineSchedule: VaccineSchedule[];
   vaccinationRecords: VaccinationRecord[];
   maternalServiceRecords: MaternalServiceRecord[];
+  riChecklists: RiChecklist[];
   auditLogs: AuditLog[];
   systemSettings: SystemSettings[];
 }

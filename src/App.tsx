@@ -13,6 +13,7 @@ import { SessionManagementPage } from './pages/SessionManagementPage';
 import { TodaySessionPage } from './pages/TodaySessionPage';
 import { SessionBeneficiarySearchPage } from './pages/SessionBeneficiarySearchPage';
 import { VaccinationTickMarkSheetPage } from './pages/VaccinationTickMarkSheetPage';
+import { RiChecklistPage } from './pages/RiChecklistPage';
 import { ReportsPage } from './pages/ReportsPage';
 import { SubcentreManagementPage } from './pages/SubcentreManagementPage';
 import { VillageManagementPage } from './pages/VillageManagementPage';
@@ -67,6 +68,7 @@ const AppShell: React.FC = () => {
         <Route path="/today-session" element={<TodaySessionPage />} />
         <Route path="/session-search" element={<SessionBeneficiarySearchPage />} />
         <Route path="/tick-sheet" element={<VaccinationTickMarkSheetPage />} />
+        <Route path="/ri-checklist" element={<RiChecklistPage />} />
         <Route path="/history" element={<BeneficiaryHistoryPage />} />
         <Route path="/due-vaccinations" element={<DueVaccinationPage />} />
         <Route path="/reports" element={<ReportsPage />} />

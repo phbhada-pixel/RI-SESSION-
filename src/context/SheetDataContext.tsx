@@ -15,6 +15,7 @@ import {
   MaternalServiceRecord,
   PregnancyEpisode,
   PregnancyStatus,
+  RiChecklist,
   SessionBeneficiary,
   SheetDatabase,
   StaffMember,
@@ -244,6 +245,11 @@ interface SheetDataContextValue {
       visitDate?: string;
     }>
   ) => Promise<void>;
+  saveRiChecklist: (
+    data: Omit<RiChecklist, 'id' | 'checklistCode' | 'createdBy' | 'createdAt' | 'updatedAt'> & {
+      id?: string;
+    }
+  ) => Promise<RiChecklist>;
 }
 
 const SheetDataContext = createContext<SheetDataContextValue | undefined>(undefined);
@@ -1982,6 +1988,95 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     });
   };
 
+  const saveRiChecklist: SheetDataContextValue['saveRiChecklist'] = async (data) => {
+    let savedItem!: RiChecklist;
+    await withSync(async () => {
+      const { activeDb, activeUser } = requireDbAndUser();
+      const ts = nowISO();
+      const existing = data.id ? activeDb.riChecklists.find((c) => c.id === data.id) : undefined;
+      let checklistCode = existing?.checklistCode || '';
+      if (!checklistCode) {
+        const dateCompact = (data.monitoringDate || getTodayIST()).replace(/-/g, '');
+        const prefix = `PHCB-RI-${dateCompact}-`;
+        const maxSeq = activeDb.riChecklists.reduce((acc, c) => {
+          if (c.checklistCode.startsWith(prefix)) {
+            const num = parseInt(c.checklistCode.slice(prefix.length), 10);
+            return Number.isFinite(num) && num > acc ? num : acc;
+          }
+          return acc;
+        }, 0);
+        checklistCode = `${prefix}${String(maxSeq + 1).padStart(3, '0')}`;
+      }
+
+      const { id: _ignoreId, ...rest } = data;
+      const item: RiChecklist = {
+        ...rest,
+        id: existing ? existing.id : generateId('ric'),
+        checklistCode,
+        createdBy: existing ? existing.createdBy : activeUser.name,
+        createdAt: existing ? existing.createdAt : ts,
+        updatedAt: ts,
+      };
+      savedItem = item;
+
+      const nextList = existing
+        ? activeDb.riChecklists.map((c) => (c.id === existing.id ? item : c))
+        : [item, ...activeDb.riChecklists];
+
+      const audit = buildAuditEntry(activeUser, {
+        action: existing
+          ? `RI सत्र निरीक्षण यादी अद्यतनित (${item.checklistCode})`
+          : `नवीन RI सत्र निरीक्षण यादी नोंदवली (${item.checklistCode})`,
+        entityType: 'RI_CHECKLIST',
+        recordId: item.id,
+        previousValue: existing
+          ? {
+              checklistCode: existing.checklistCode,
+              isSessionHeld: existing.isSessionHeld,
+              monitoringDate: existing.monitoringDate,
+            }
+          : null,
+        newValue: {
+          checklistCode: item.checklistCode,
+          subcentreName: item.subcentreName,
+          sessionSiteName: item.sessionSiteName,
+          monitoringDate: item.monitoringDate,
+          isSessionHeld: item.isSessionHeld,
+        },
+      });
+
+      if (existing) {
+        await rewriteSheetTab(
+          activeDb.spreadsheetId,
+          'riChecklists',
+          nextList as unknown as Record<string, unknown>[]
+        );
+      } else {
+        await appendSheetRows(activeDb.spreadsheetId, 'riChecklists', [
+          item as unknown as Record<string, unknown>,
+        ]);
+      }
+      await appendSheetRows(activeDb.spreadsheetId, 'auditLogs', [
+        audit as unknown as Record<string, unknown>,
+      ]);
+
+      setDb((prev) =>
+        prev
+          ? {
+              ...prev,
+              riChecklists: nextList.sort(
+                (a, b) =>
+                  b.monitoringDate.localeCompare(a.monitoringDate) ||
+                  b.createdAt.localeCompare(a.createdAt)
+              ),
+              auditLogs: [audit, ...prev.auditLogs],
+            }
+          : prev
+      );
+    });
+    return savedItem;
+  };
+
   const downloadFullWorkbook = () => {
     if (!db) return;
     const sheets = SHEET_TABS.map((tab) => {
@@ -2089,6 +2184,7 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         seedStarterHierarchy,
         administerVaccineDoses,
         recordMaternalServices,
+        saveRiChecklist,
       }}
     >
       {children}

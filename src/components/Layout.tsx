@@ -84,6 +84,12 @@ const NAV_ITEMS: NavItem[] = [
     icon: <CheckSquare className="w-4 h-4" />,
     roles: ALL_ROLES,
   },
+  {
+    to: '/ri-checklist',
+    label: 'RI सत्र निरीक्षण चेकलिस्ट',
+    icon: <ClipboardList className="w-4 h-4" />,
+    roles: ALL_ROLES,
+  },
   { to: '/history', label: 'लसीकरण इतिहास', icon: <History className="w-4 h-4" />, roles: ALL_ROLES },
   { to: '/due-vaccinations', label: 'देय लसीकरण', icon: <Clock className="w-4 h-4" />, roles: ALL_ROLES },
   { to: '/reports', label: 'अहवाल', icon: <FileBarChart2 className="w-4 h-4" />, roles: ALL_ROLES },
