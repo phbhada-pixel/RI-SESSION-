@@ -1,18 +1,27 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Baby, Eye, EyeOff, HeartPulse } from 'lucide-react';
+import { Baby, CheckCircle2, Eye, EyeOff, HeartPulse, Syringe, X } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useSheetData } from '../context/SheetDataContext';
 import {
+  Beneficiary,
   BeneficiaryGender,
   BeneficiaryStatus,
   BeneficiaryType,
   DeliveryFacilityType,
 } from '../types';
-import { calculateAgeAsOf, getTodayIST } from '../utils/dateUtils';
-import { CASTE_CATEGORIES, calculateEddFromMcDate } from '../utils/maternalUtils';
+import { calculateAgeAsOf, getSessionEditStatus, getTodayIST } from '../utils/dateUtils';
+import {
+  BLOOD_GROUPS,
+  calculateEddFromMcDate,
+  calculateWomanAgeFromDob,
+  CASTE_CATEGORIES,
+  PLANNED_DELIVERY_PLACES,
+  RH_FACTORS,
+} from '../utils/maternalUtils';
 import { canViewFullAadhaar, maskAadhaar, sanitizeOptionalAadhaar } from '../utils/privacyUtils';
 import { SearchableSelect } from '../components/SearchableSelect';
 import { ConfirmModal } from '../components/ConfirmModal';
+import { PageHeader } from '../components/PageHeader';
 import { Toast } from '../components/Toast';
 
 export const BeneficiaryRegistrationPage: React.FC = () => {
@@ -28,9 +37,11 @@ export const BeneficiaryRegistrationPage: React.FC = () => {
 
   const [beneficiaryType, setBeneficiaryType] = useState<BeneficiaryType>(initialTypeParam);
   const [childName, setChildName] = useState('');
+  const [fullNameEnglish, setFullNameEnglish] = useState('');
   const [motherName, setMotherName] = useState('');
   const [fatherName, setFatherName] = useState('');
   const [guardianName, setGuardianName] = useState('');
+  const [husbandMobile, setHusbandMobile] = useState('');
   const [dob, setDob] = useState('');
   const [gender, setGender] = useState<BeneficiaryGender>(
     initialTypeParam === 'PREGNANT_WOMAN' ? 'स्त्री' : 'मुलगा'
@@ -41,6 +52,9 @@ export const BeneficiaryRegistrationPage: React.FC = () => {
   const [existingMaskedAadhaar, setExistingMaskedAadhaar] = useState('');
   const [caste, setCaste] = useState('');
   const [category, setCategory] = useState<string>(CASTE_CATEGORIES[0]);
+  const [bloodGroup, setBloodGroup] = useState('');
+  const [rhFactor, setRhFactor] = useState('');
+  const [plannedDeliveryPlace, setPlannedDeliveryPlace] = useState('');
   const [address, setAddress] = useState('');
   const [subcentreId, setSubcentreId] = useState(scopedSubcentre);
   const [villageId, setVillageId] = useState('');
@@ -56,10 +70,18 @@ export const BeneficiaryRegistrationPage: React.FC = () => {
     useState<DeliveryFacilityType>('Government');
   const [hospitalName, setHospitalName] = useState('');
   const [gravidaPara, setGravidaPara] = useState('');
+  const [gravida, setGravida] = useState('');
+  const [para, setPara] = useState('');
+  const [abortions, setAbortions] = useState('');
+  const [livingChildren, setLivingChildren] = useState('');
+  const [previousPregnancyHistory, setPreviousPregnancyHistory] = useState('');
+  const [previousCaesarean, setPreviousCaesarean] = useState<'Yes' | 'No' | ''>('No');
+  const [previousComplications, setPreviousComplications] = useState('');
 
   const [error, setError] = useState('');
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [justRegisteredBen, setJustRegisteredBen] = useState<Beneficiary | null>(null);
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' }>({
     msg: '',
     type: 'success',
@@ -73,9 +95,11 @@ export const BeneficiaryRegistrationPage: React.FC = () => {
     if (found) {
       setBeneficiaryType(found.beneficiaryType || 'CHILD');
       setChildName(found.childName);
+      setFullNameEnglish(found.fullNameEnglish || '');
       setMotherName(found.motherName);
       setFatherName(found.fatherName);
       setGuardianName(found.guardianName || found.fatherName || '');
+      setHusbandMobile(found.husbandMobile || '');
       setDob(found.dob);
       setGender(found.gender);
       setMobile(found.mobile);
@@ -83,6 +107,9 @@ export const BeneficiaryRegistrationPage: React.FC = () => {
       setExistingMaskedAadhaar(maskAadhaar(found.aadhaarNumber));
       setCaste(found.caste || '');
       setCategory(found.category || CASTE_CATEGORIES[0]);
+      setBloodGroup(found.bloodGroup || '');
+      setRhFactor(found.rhFactor || '');
+      setPlannedDeliveryPlace(found.plannedDeliveryPlace || '');
       setAddress(found.address);
       setSubcentreId(found.subcentreId);
       setVillageId(found.villageId);
@@ -99,13 +126,26 @@ export const BeneficiaryRegistrationPage: React.FC = () => {
 
   const filteredVillages = useMemo(
     () =>
-      db ? db.villages.filter((v) => v.isActive && v.subcentreId === subcentreId) : [],
-    [db, subcentreId]
+      db
+        ? db.villages.filter(
+            (v) =>
+              v.isActive &&
+              (scopedSubcentre
+                ? v.subcentreId === scopedSubcentre
+                : !subcentreId || v.subcentreId === subcentreId)
+          )
+        : [],
+    [db, subcentreId, scopedSubcentre]
   );
 
   const currentAge = useMemo(
-    () => (dob ? calculateAgeAsOf(dob, getTodayIST()).labelMarathi : '-'),
-    [dob]
+    () =>
+      dob
+        ? beneficiaryType === 'PREGNANT_WOMAN'
+          ? calculateWomanAgeFromDob(dob, getTodayIST())
+          : calculateAgeAsOf(dob, getTodayIST()).labelMarathi
+        : '-',
+    [dob, beneficiaryType]
   );
 
   const handleSwitchType = (nextType: BeneficiaryType) => {
@@ -163,6 +203,7 @@ export const BeneficiaryRegistrationPage: React.FC = () => {
         await updateBeneficiary(editId, {
           beneficiaryType,
           childName: childName.trim(),
+          fullNameEnglish: fullNameEnglish.trim(),
           motherName:
             beneficiaryType === 'PREGNANT_WOMAN' ? childName.trim() : motherName.trim(),
           fatherName:
@@ -170,12 +211,16 @@ export const BeneficiaryRegistrationPage: React.FC = () => {
               ? effectiveGuardian
               : fatherName.trim() || effectiveGuardian,
           guardianName: effectiveGuardian,
+          husbandMobile: husbandMobile.trim(),
           dob,
           gender: beneficiaryType === 'PREGNANT_WOMAN' ? 'स्त्री' : gender,
           mobile: mobile.trim(),
           ...(aadhaarAuthorized ? { aadhaarNumber: aadhaarNumber.trim() } : {}),
           caste: caste.trim(),
           category,
+          bloodGroup,
+          rhFactor,
+          plannedDeliveryPlace: plannedDeliveryPlace.trim(),
           address: address.trim(),
           subcentreId,
           subcentreName: sc.name,
@@ -186,7 +231,7 @@ export const BeneficiaryRegistrationPage: React.FC = () => {
           status,
         });
         setToast({
-          msg: 'लाभार्थी कायमस्वरूपी प्रोफाइल Google Sheet मध्ये अद्यतनित केली.',
+          msg: 'लाभार्थी कायमस्वरूपी प्रोफाइल अद्यतनित केली.',
           type: 'success',
         });
       } else {
@@ -194,6 +239,7 @@ export const BeneficiaryRegistrationPage: React.FC = () => {
           {
             beneficiaryType,
             childName: childName.trim(),
+            fullNameEnglish: fullNameEnglish.trim(),
             motherName:
               beneficiaryType === 'PREGNANT_WOMAN' ? childName.trim() : motherName.trim(),
             fatherName:
@@ -201,12 +247,17 @@ export const BeneficiaryRegistrationPage: React.FC = () => {
                 ? effectiveGuardian
                 : fatherName.trim() || effectiveGuardian,
             guardianName: effectiveGuardian,
+            husbandMobile: husbandMobile.trim(),
             dob,
             gender: beneficiaryType === 'PREGNANT_WOMAN' ? 'स्त्री' : gender,
             mobile: mobile.trim(),
             aadhaarNumber: aadhaarNumber.trim(),
             caste: caste.trim(),
             category,
+            bloodGroup,
+            rhFactor,
+            plannedDeliveryPlace: plannedDeliveryPlace.trim() || expectedDeliveryPlace.trim(),
+            plannedHospitalName: hospitalName.trim(),
             address: address.trim() || vl.name,
             subcentreId,
             subcentreName: sc.name,
@@ -220,12 +271,22 @@ export const BeneficiaryRegistrationPage: React.FC = () => {
             ? {
                 mcDate,
                 eddDate: eddDate || calculateEddFromMcDate(mcDate),
-                expectedDeliveryPlace: expectedDeliveryPlace.trim() || vl.name,
+                expectedDeliveryPlace:
+                  expectedDeliveryPlace.trim() || plannedDeliveryPlace.trim() || vl.name,
                 deliveryFacilityType,
                 hospitalName: hospitalName.trim(),
                 pregnancyRegistrationDate: registrationDate,
                 pregnancyStatus: 'सक्रिय',
                 gravidaPara: gravidaPara.trim(),
+                gravida: gravida ? Number(gravida) : null,
+                para: para ? Number(para) : null,
+                abortions: abortions ? Number(abortions) : null,
+                livingChildren: livingChildren ? Number(livingChildren) : null,
+                previousPregnancyHistory: previousPregnancyHistory.trim(),
+                previousCaesarean,
+                previousComplications: previousComplications.trim(),
+                bloodGroup,
+                rhFactor,
               }
             : undefined
         );
@@ -233,17 +294,23 @@ export const BeneficiaryRegistrationPage: React.FC = () => {
           msg:
             beneficiaryType === 'PREGNANT_WOMAN'
               ? `गरोदर माता नोंदवली! माता आयडी: ${res.beneficiary.beneficiaryCode} · प्रकरण: ${res.episode?.episodeCode || '-'}`
-              : `नवीन बालक लाभार्थी Google Sheet मध्ये नोंदवला! आयडी: ${res.beneficiary.beneficiaryCode}`,
+              : `नवीन बालक लाभार्थी नोंदवला! आयडी: ${res.beneficiary.beneficiaryCode}`,
           type: 'success',
         });
+        setJustRegisteredBen(res.beneficiary);
         setChildName('');
+        setFullNameEnglish('');
         setMotherName('');
         setFatherName('');
         setGuardianName('');
+        setHusbandMobile('');
         setDob('');
         setMobile('');
         setAadhaarNumber('');
         setCaste('');
+        setBloodGroup('');
+        setRhFactor('');
+        setPlannedDeliveryPlace('');
         setAddress('');
         setAnganwadi('');
         setMcDate('');
@@ -251,6 +318,12 @@ export const BeneficiaryRegistrationPage: React.FC = () => {
         setExpectedDeliveryPlace('');
         setHospitalName('');
         setGravidaPara('');
+        setGravida('');
+        setPara('');
+        setAbortions('');
+        setLivingChildren('');
+        setPreviousPregnancyHistory('');
+        setPreviousComplications('');
       }
       setConfirmOpen(false);
     } catch (err) {
@@ -261,36 +334,46 @@ export const BeneficiaryRegistrationPage: React.FC = () => {
     }
   };
 
+  const todayMatchingSessions = useMemo(() => {
+    if (!db || !justRegisteredBen) return [];
+    const todayIST = getTodayIST();
+    const open = db.vaccinationSessions.filter(
+      (s) => s.sessionDate === todayIST && getSessionEditStatus(s).isOpen
+    );
+    const sameVillage = open.filter((s) => s.villageId === justRegisteredBen.villageId);
+    if (sameVillage.length > 0) return sameVillage;
+    const sameSc = open.filter((s) => s.subcentreId === justRegisteredBen.subcentreId);
+    return sameSc.length > 0 ? sameSc : open;
+  }, [db, justRegisteredBen]);
+
   return (
-    <div className="max-w-4xl mx-auto bg-white p-5 md:p-6 rounded-xl border border-slate-200 space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900">
-            {editId ? 'लाभार्थी कायमस्वरूपी प्रोफाइल दुरुस्ती' : 'नवीन लाभार्थी नोंदणी'}
-          </h2>
-          <p className="text-xs text-slate-500">
-            कायमस्वरूपी माहिती एकदाच Google Sheet मधील beneficiaries टॅबमध्ये जतन होईल
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          {beneficiaryType === 'PREGNANT_WOMAN' && (
+    <div className="app-page max-w-4xl">
+      <PageHeader
+        title={editId ? 'लाभार्थी कायमस्वरूपी प्रोफाइल दुरुस्ती' : 'नवीन लाभार्थी नोंदणी'}
+        subtitle="कायमस्वरूपी माहिती एकदाच जतन होईल"
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            {beneficiaryType === 'PREGNANT_WOMAN' && (
+              <button
+                type="button"
+                onClick={() => navigate('/pregnant-women')}
+                className="app-btn-secondary text-xs"
+              >
+                गरोदर माता यादी पहा →
+              </button>
+            )}
             <button
               type="button"
-              onClick={() => navigate('/pregnant-women')}
-              className="text-sm font-medium text-teal-700 hover:underline whitespace-nowrap"
+              onClick={() => navigate('/beneficiaries')}
+              className="app-btn-secondary text-xs"
             >
-              गरोदर माता यादी पहा →
+              लाभार्थी यादी पहा →
             </button>
-          )}
-          <button
-            type="button"
-            onClick={() => navigate('/beneficiaries')}
-            className="text-sm font-medium text-teal-700 hover:underline whitespace-nowrap"
-          >
-            लाभार्थी यादी पहा →
-          </button>
-        </div>
-      </div>
+          </div>
+        }
+      />
+
+      <div className="app-card app-card-body space-y-5">
 
       {/* Category Switch */}
       <div className="flex flex-wrap items-center gap-2">
@@ -400,15 +483,98 @@ export const BeneficiaryRegistrationPage: React.FC = () => {
               </div>
             </>
           ) : (
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">पतीचे पूर्ण नाव *</label>
-              <input
-                required
-                value={guardianName}
-                onChange={(e) => setGuardianName(e.target.value)}
-                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
-              />
-            </div>
+            <>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  मातेचे पूर्ण नाव (English)
+                </label>
+                <input
+                  value={fullNameEnglish}
+                  onChange={(e) => setFullNameEnglish(e.target.value)}
+                  placeholder="Full Name in English"
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">पतीचे पूर्ण नाव *</label>
+                <input
+                  required
+                  value={guardianName}
+                  onChange={(e) => setGuardianName(e.target.value)}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  पतीचा मोबाईल क्रमांक
+                </label>
+                <input
+                  maxLength={10}
+                  value={husbandMobile}
+                  onChange={(e) => setHusbandMobile(e.target.value)}
+                  placeholder="१० अंकी मोबाईल (ऐच्छिक)"
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono-tabular"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  मातेची जन्मतारीख{' '}
+                  <span className="text-xs text-teal-700">(वय: {currentAge})</span>
+                </label>
+                <input
+                  type="date"
+                  max={getTodayIST()}
+                  value={dob}
+                  onChange={(e) => setDob(e.target.value)}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono-tabular"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">रक्तगट व Rh Factor</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <select
+                    value={bloodGroup}
+                    onChange={(e) => setBloodGroup(e.target.value)}
+                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white"
+                  >
+                    <option value="">रक्तगट</option>
+                    {BLOOD_GROUPS.map((bg) => (
+                      <option key={bg} value={bg}>{bg}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={rhFactor}
+                    onChange={(e) => setRhFactor(e.target.value)}
+                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white"
+                  >
+                    <option value="">Rh Factor</option>
+                    {RH_FACTORS.map((rh) => (
+                      <option key={rh} value={rh}>{rh}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  नियोजित प्रसूती ठिकाण (कायमस्वरूपी)
+                </label>
+                <input
+                  list="planned-delivery-places"
+                  value={plannedDeliveryPlace}
+                  onChange={(e) => {
+                    setPlannedDeliveryPlace(e.target.value);
+                    if (!expectedDeliveryPlace) setExpectedDeliveryPlace(e.target.value);
+                  }}
+                  placeholder="उदा. प्राथमिक आरोग्य केंद्र भादा"
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                />
+                <datalist id="planned-delivery-places">
+                  {PLANNED_DELIVERY_PLACES.map((pl) => (
+                    <option key={pl} value={pl} />
+                  ))}
+                </datalist>
+              </div>
+            </>
           )}
 
           <div>
@@ -487,28 +653,36 @@ export const BeneficiaryRegistrationPage: React.FC = () => {
           </div>
 
           <SearchableSelect
+            label="गाव (निवडल्यास उपकेंद्र आपोआप निवडले जाईल)"
+            required
+            value={villageId}
+            onChange={(val) => {
+              setVillageId(val);
+              const matched = db?.villages.find((v) => v.id === val);
+              if (matched && !scopedSubcentre) {
+                setSubcentreId(matched.subcentreId);
+              }
+            }}
+            options={filteredVillages.map((v) => ({
+              value: v.id,
+              label: v.name,
+              sublabel: `${v.subcentreName} · ${v.villageCode}`,
+            }))}
+          />
+
+          <SearchableSelect
             label="उपकेंद्र"
             required
             disabled={Boolean(scopedSubcentre)}
             value={subcentreId}
             onChange={(val) => {
               setSubcentreId(val);
-              setVillageId('');
+              const currentVil = db?.villages.find((v) => v.id === villageId);
+              if (currentVil && currentVil.subcentreId !== val) {
+                setVillageId('');
+              }
             }}
             options={activeSubcentres.map((s) => ({ value: s.id, label: s.name, sublabel: s.code }))}
-          />
-
-          <SearchableSelect
-            label="गाव"
-            required
-            disabled={!subcentreId}
-            value={villageId}
-            onChange={setVillageId}
-            options={filteredVillages.map((v) => ({
-              value: v.id,
-              label: v.name,
-              sublabel: v.villageCode,
-            }))}
           />
 
           {beneficiaryType === 'CHILD' && (
@@ -599,9 +773,13 @@ export const BeneficiaryRegistrationPage: React.FC = () => {
                 </label>
                 <input
                   required
+                  list="planned-delivery-places"
                   value={expectedDeliveryPlace}
-                  onChange={(e) => setExpectedDeliveryPlace(e.target.value)}
-                  placeholder="उदा. भादा / लातूर"
+                  onChange={(e) => {
+                    setExpectedDeliveryPlace(e.target.value);
+                    setPlannedDeliveryPlace(e.target.value);
+                  }}
+                  placeholder="उदा. प्राथमिक आरोग्य केंद्र भादा"
                   className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
                 />
               </div>
@@ -634,12 +812,47 @@ export const BeneficiaryRegistrationPage: React.FC = () => {
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">
-                  गर्भधारणा क्रमांक (Gravida/Para)
+                  G / P / A / L (Gravida, Para, Abortions, Living)
+                </label>
+                <div className="grid grid-cols-4 gap-1.5">
+                  <input type="number" min={0} placeholder="G" value={gravida} onChange={(e) => setGravida(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-2 text-sm font-mono-tabular" />
+                  <input type="number" min={0} placeholder="P" value={para} onChange={(e) => setPara(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-2 text-sm font-mono-tabular" />
+                  <input type="number" min={0} placeholder="A" value={abortions} onChange={(e) => setAbortions(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-2 text-sm font-mono-tabular" />
+                  <input type="number" min={0} placeholder="L" value={livingChildren} onChange={(e) => setLivingChildren(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-2 text-sm font-mono-tabular" />
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  मागील सिझेरियन (Previous LSCS)
+                </label>
+                <select
+                  value={previousCaesarean}
+                  onChange={(e) => setPreviousCaesarean(e.target.value as 'Yes' | 'No')}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white"
+                >
+                  <option value="No">नाही (No)</option>
+                  <option value="Yes">होय (Yes)</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  मागील गर्भधारणा इतिहास
                 </label>
                 <input
-                  value={gravidaPara}
-                  onChange={(e) => setGravidaPara(e.target.value)}
-                  placeholder="उदा. G1 P0"
+                  value={previousPregnancyHistory}
+                  onChange={(e) => setPreviousPregnancyHistory(e.target.value)}
+                  placeholder="मागील प्रसूती तपशील"
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+              <div className="md:col-span-3">
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  मागील गर्भधारणेतील गुंतागुंत (Previous Complications — असल्यास)
+                </label>
+                <input
+                  value={previousComplications}
+                  onChange={(e) => setPreviousComplications(e.target.value)}
+                  placeholder="उदा. Pre-eclampsia, PPH, गर्भपात..."
                   className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
                 />
               </div>
@@ -651,7 +864,7 @@ export const BeneficiaryRegistrationPage: React.FC = () => {
           <button
             type="submit"
             disabled={saving}
-            className="px-6 py-2.5 rounded-lg bg-teal-700 hover:bg-teal-800 text-white font-semibold text-sm disabled:opacity-60"
+            className="app-btn-primary px-6 py-2.5"
           >
             {editId
               ? 'कायमस्वरूपी प्रोफाइल अद्यतनित करा'
@@ -661,13 +874,14 @@ export const BeneficiaryRegistrationPage: React.FC = () => {
           </button>
         </div>
       </form>
+      </div>
 
       <ConfirmModal
         open={confirmOpen}
         title={
           editId
             ? 'लाभार्थी माहिती अद्यतनित करायची का?'
-            : 'नवीन लाभार्थी Google Sheet मध्ये नोंदवायचा का?'
+            : 'नवीन लाभार्थी नोंदवायचा का?'
         }
         description={`नाव: ${childName} · मोबाईल: ${mobile} · प्रकार: ${
           beneficiaryType === 'PREGNANT_WOMAN' ? 'गरोदर माता' : 'बालक'
@@ -677,6 +891,73 @@ export const BeneficiaryRegistrationPage: React.FC = () => {
         onConfirm={handleConfirmSave}
         onCancel={() => setConfirmOpen(false)}
       />
+
+      {/* Post-Registration Modal to jump to Today's Session Dose Screen */}
+      {justRegisteredBen && (
+        <div className="app-modal-backdrop" role="dialog" aria-modal="true">
+          <div className="app-modal max-w-lg p-0 overflow-hidden space-y-0">
+            <div className="px-5 py-3.5 bg-teal-800 text-white flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 text-emerald-300 shrink-0" />
+                <h3 className="text-base font-bold">लाभार्थी नोंदणी यशस्वी झाली!</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setJustRegisteredBen(null)}
+                className="p-1.5 rounded text-teal-100 hover:text-white"
+                aria-label="बंद करा"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-5 space-y-3 text-sm">
+              <div className="p-3.5 rounded-lg bg-teal-50/70 border border-teal-200 space-y-1">
+                <div className="font-bold text-slate-900">{justRegisteredBen.childName}</div>
+                <div className="text-xs text-slate-700 font-mono-tabular">
+                  आयडी: {justRegisteredBen.beneficiaryCode} · गाव: {justRegisteredBen.villageName} · मोबाईल: {justRegisteredBen.mobile}
+                </div>
+              </div>
+              {todayMatchingSessions.length > 0 ? (
+                <div className="space-y-2">
+                  <p className="text-xs text-slate-700">
+                    आजच्या सत्रात या लाभार्थ्याला द्यावयाचे लसीकरण डोस / सेवा नोंदवण्यासाठी खालील बटणावर क्लिक करा:
+                  </p>
+                  <div className="space-y-2">
+                    {todayMatchingSessions.slice(0, 3).map((ses) => (
+                      <button
+                        key={ses.id}
+                        type="button"
+                        onClick={() =>
+                          navigate(`/today-session?sessionId=${ses.id}&recordBenId=${justRegisteredBen.id}`)
+                        }
+                        className="w-full app-btn-primary justify-between py-2.5 px-4 text-xs"
+                      >
+                        <span className="inline-flex items-center gap-2">
+                          <Syringe className="w-4 h-4" /> आजचे डोस नोंदवा ({ses.villageName} · {ses.sessionCode})
+                        </span>
+                        <span>→</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-600">
+                  आजच्या दिनांकासाठी खुले लसीकरण सत्र आढळले नाही. आपण 'आजचे लसीकरण सत्र' पानावरून सत्र निवडून डोस नोंदवू शकता.
+                </p>
+              )}
+            </div>
+            <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setJustRegisteredBen(null)}
+                className="app-btn-secondary"
+              >
+                बंद करा
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <Toast
         message={toast.msg}

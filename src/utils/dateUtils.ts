@@ -31,7 +31,7 @@ export function computeSessionEditDeadlineISO(sessionDateISO: string, extraDays 
 
 export interface SessionWindowStatus {
   isOpen: boolean;
-  labelMarathi: 'OPEN (सुरू)' | 'LOCKED (लॉक)';
+  labelMarathi: string;
   remainingText: string;
   isReopened: boolean;
 }
@@ -40,13 +40,12 @@ export function getSessionEditStatus(
   session: VaccinationSession,
   nowMs: number = Date.now()
 ): SessionWindowStatus {
-  const reopenedMs = session.reopenedUntil ? Date.parse(session.reopenedUntil) : 0;
-  if (reopenedMs > nowMs) {
+  if (session.status === 'पूर्ण') {
     return {
-      isOpen: true,
-      labelMarathi: 'OPEN (सुरू)',
-      remainingText: `प्रशासकाद्वारे पुन्हा उघडलेले: ${formatRemainingMs(reopenedMs - nowMs)} शिल्लक`,
-      isReopened: true,
+      isOpen: false,
+      labelMarathi: 'LOCKED (बंद / पूर्ण)',
+      remainingText: 'सत्र पूर्ण (बंद) केलेले आहे — डेटा एन्ट्री बंद आहे',
+      isReopened: false,
     };
   }
 
@@ -54,8 +53,27 @@ export function getSessionEditStatus(
     return {
       isOpen: false,
       labelMarathi: 'LOCKED (लॉक)',
-      remainingText: 'सत्र लॉक केलेले आहे',
+      remainingText: 'सत्र लॉक केलेले आहे — डेटा एन्ट्री बंद आहे',
       isReopened: false,
+    };
+  }
+
+  if (session.status === 'रद्द') {
+    return {
+      isOpen: false,
+      labelMarathi: 'LOCKED (रद्द)',
+      remainingText: 'सत्र रद्द केलेले आहे — डेटा एन्ट्री बंद आहे',
+      isReopened: false,
+    };
+  }
+
+  const reopenedMs = session.reopenedUntil ? Date.parse(session.reopenedUntil) : 0;
+  if (reopenedMs > nowMs) {
+    return {
+      isOpen: true,
+      labelMarathi: 'OPEN (सुरू)',
+      remainingText: `प्रशासकाद्वारे पुन्हा उघडलेले: ${formatRemainingMs(reopenedMs - nowMs)} शिल्लक`,
+      isReopened: true,
     };
   }
 

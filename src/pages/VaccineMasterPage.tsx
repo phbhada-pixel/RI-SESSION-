@@ -3,6 +3,8 @@ import { CheckCircle2, Edit, PlusCircle, Sparkles } from 'lucide-react';
 import { useSheetData } from '../context/SheetDataContext';
 import { AgeUnit, ApplicableCategory, VaccineMaster, VaccineSchedule } from '../types';
 import { ConfirmModal } from '../components/ConfirmModal';
+import { EmptyState } from '../components/EmptyState';
+import { PageHeader } from '../components/PageHeader';
 import { Toast } from '../components/Toast';
 
 export const VaccineMasterPage: React.FC = () => {
@@ -121,7 +123,7 @@ export const VaccineMasterPage: React.FC = () => {
           isActive: masterActive,
         });
         resetMaster();
-        setToast({ msg: 'लस मास्टर Google Sheet मध्ये जतन केले.', type: 'success' });
+        setToast({ msg: 'लस मास्टर जतन केले.', type: 'success' });
       } else if (confirmAction === 'SCHEDULE') {
         const vac = db.vaccineMaster.find((v) => v.id === schVaccineId);
         if (!vac) throw new Error('कृपया लस निवडा.');
@@ -147,11 +149,11 @@ export const VaccineMasterPage: React.FC = () => {
           isActive: schActive,
         });
         resetSchedule();
-        setToast({ msg: 'लसीकरण वेळापत्रक Google Sheet मध्ये जतन केले.', type: 'success' });
+        setToast({ msg: 'लसीकरण वेळापत्रक जतन केले.', type: 'success' });
       } else if (confirmAction === 'SEED_NIS') {
         await seedStandardNIS();
         setToast({
-          msg: 'राष्ट्रीय लसीकरण वेळापत्रक (NIS) Google Sheet मध्ये भरले गेले.',
+          msg: 'राष्ट्रीय लसीकरण वेळापत्रक (NIS) यशस्वीरित्या भरले गेले.',
           type: 'success',
         });
       }
@@ -164,32 +166,29 @@ export const VaccineMasterPage: React.FC = () => {
   };
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-bold text-slate-900">Vaccine Master व वेळापत्रक प्रमाणीकरण</h2>
-          <p className="text-xs text-slate-500">
-            पात्रता इंजिन केवळ प्रमाणित (Validated) व सक्रिय लस वेळापत्रक नियमांवर चालते
-          </p>
-        </div>
-
-        {isAdmin && (
-          <button
-            type="button"
-            onClick={() => setConfirmAction('SEED_NIS')}
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg whitespace-nowrap"
-          >
-            <Sparkles className="w-4 h-4" /> राष्ट्रीय लसीकरण वेळापत्रक (NIS) भरा
-          </button>
-        )}
-      </div>
+    <div className="app-page">
+      <PageHeader
+        title="Vaccine Master व वेळापत्रक प्रमाणीकरण"
+        subtitle="पात्रता इंजिन केवळ प्रमाणित (Validated) व सक्रिय लस वेळापत्रक नियमांवर चालते"
+        actions={
+          isAdmin ? (
+            <button
+              type="button"
+              onClick={() => setConfirmAction('SEED_NIS')}
+              className="app-btn-primary text-xs"
+            >
+              <Sparkles className="w-4 h-4" /> राष्ट्रीय लसीकरण वेळापत्रक (NIS) भरा
+            </button>
+          ) : undefined
+        }
+      />
 
       <div className="flex gap-1.5 p-1 bg-slate-200/70 rounded-xl w-fit">
         <button
           type="button"
           onClick={() => setActiveTab('SCHEDULE')}
-          className={`px-3 py-1.5 text-xs font-semibold rounded-lg ${
-            activeTab === 'SCHEDULE' ? 'bg-white text-teal-900 shadow-sm' : 'text-slate-600'
+          className={`px-3 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap shrink-0 transition-colors ${
+            activeTab === 'SCHEDULE' ? 'bg-white text-teal-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
           }`}
         >
           डोस वेळापत्रक (Vaccine Schedule)
@@ -197,8 +196,8 @@ export const VaccineMasterPage: React.FC = () => {
         <button
           type="button"
           onClick={() => setActiveTab('MASTER')}
-          className={`px-3 py-1.5 text-xs font-semibold rounded-lg ${
-            activeTab === 'MASTER' ? 'bg-white text-teal-900 shadow-sm' : 'text-slate-600'
+          className={`px-3 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap shrink-0 transition-colors ${
+            activeTab === 'MASTER' ? 'bg-white text-teal-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
           }`}
         >
           मूळ लस यादी (Vaccine Master)
@@ -213,10 +212,10 @@ export const VaccineMasterPage: React.FC = () => {
                 e.preventDefault();
                 setConfirmAction('MASTER');
               }}
-              className="bg-white p-5 rounded-xl border border-slate-200 space-y-4"
+              className="app-card app-card-body space-y-4"
             >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 text-sm font-bold text-slate-800">
+              <div className="flex items-center justify-between gap-2">
+                <div className="app-section-title">
                   <PlusCircle className="w-4 h-4 text-teal-700" />
                   {editMaster ? 'लस माहिती दुरुस्ती' : 'नवीन लस जोडा'}
                 </div>
@@ -224,7 +223,7 @@ export const VaccineMasterPage: React.FC = () => {
                   <button
                     type="button"
                     onClick={resetMaster}
-                    className="text-xs text-slate-600 hover:underline"
+                    className="text-xs font-medium text-teal-700 hover:underline whitespace-nowrap shrink-0"
                   >
                     रद्द करा
                   </button>
@@ -233,29 +232,29 @@ export const VaccineMasterPage: React.FC = () => {
 
               <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
                 <div>
-                  <label className="block text-xs font-medium text-slate-700 mb-1">लसीचे नाव *</label>
+                  <label className="app-label">लसीचे नाव *</label>
                   <input
                     required
                     value={vaccineName}
                     onChange={(e) => setVaccineName(e.target.value)}
-                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                    className="app-input"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-700 mb-1">संक्षिप्त कोड *</label>
+                  <label className="app-label">संक्षिप्त कोड *</label>
                   <input
                     required
                     value={shortCode}
                     onChange={(e) => setShortCode(e.target.value)}
-                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono-tabular"
+                    className="app-input font-mono-tabular"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-700 mb-1">प्रवर्ग</label>
+                  <label className="app-label">प्रवर्ग</label>
                   <select
                     value={category}
                     onChange={(e) => setCategory(e.target.value as ApplicableCategory)}
-                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white"
+                    className="app-input"
                   >
                     <option value="Child">Child</option>
                     <option value="Pregnant_Woman">Pregnant_Woman</option>
@@ -264,83 +263,86 @@ export const VaccineMasterPage: React.FC = () => {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-700 mb-1">क्रम</label>
+                  <label className="app-label">क्रम</label>
                   <input
                     type="number"
                     min={1}
                     value={displayOrder}
                     onChange={(e) => setDisplayOrder(Number(e.target.value))}
-                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono-tabular"
+                    className="app-input font-mono-tabular"
                   />
                 </div>
                 <div className="flex flex-col gap-1.5 pb-1 text-xs">
-                  <label className="flex items-center gap-2">
+                  <label className="flex items-center gap-2 cursor-pointer">
                     <input
                       type="checkbox"
                       checked={requiresBatchNumber}
                       onChange={(e) => setRequiresBatchNumber(e.target.checked)}
+                      className="w-4 h-4 accent-teal-700"
                     />
                     बॅच क्रमांक आवश्यक
                   </label>
-                  <label className="flex items-center gap-2">
+                  <label className="flex items-center gap-2 cursor-pointer">
                     <input
                       type="checkbox"
                       checked={masterActive}
                       onChange={(e) => setMasterActive(e.target.checked)}
+                      className="w-4 h-4 accent-teal-700"
                     />
                     सक्रिय (Active)
                   </label>
                 </div>
               </div>
 
-              <button
-                type="submit"
-                className="px-5 py-2 rounded-lg bg-teal-700 hover:bg-teal-800 text-white text-sm font-semibold"
-              >
+              <button type="submit" className="app-btn-primary">
                 {editMaster ? 'अद्यतनित करा' : 'जतन करा'}
               </button>
             </form>
           )}
 
-          <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto">
-            <table className="w-full text-sm text-left">
-              <thead className="bg-slate-50 text-slate-600 text-xs border-b border-slate-200">
-                <tr>
-                  <th className="px-4 py-3 font-semibold">क्रम</th>
-                  <th className="px-4 py-3 font-semibold">लस नाव</th>
-                  <th className="px-4 py-3 font-semibold">कोड</th>
-                  <th className="px-4 py-3 font-semibold">प्रवर्ग</th>
-                  <th className="px-4 py-3 font-semibold">स्थिती</th>
-                  {isAdmin && <th className="px-4 py-3 font-semibold text-right">दुरुस्ती</th>}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {db.vaccineMaster.map((m) => (
-                  <tr key={m.id} className="hover:bg-slate-50">
-                    <td className="px-4 py-2.5 font-mono-tabular text-xs">{m.displayOrder}</td>
-                    <td className="px-4 py-2.5 font-semibold text-slate-900">{m.vaccineName}</td>
-                    <td className="px-4 py-2.5 font-mono-tabular text-xs">{m.shortCode}</td>
-                    <td className="px-4 py-2.5 text-xs text-slate-600">{m.applicableCategory}</td>
-                    <td className="px-4 py-2.5 text-xs">
-                      <span className={m.isActive ? 'text-emerald-700 font-semibold' : 'text-rose-700'}>
-                        {m.isActive ? 'सक्रिय' : 'निष्क्रिय'}
-                      </span>
-                    </td>
-                    {isAdmin && (
-                      <td className="px-4 py-2.5 text-right">
-                        <button
-                          type="button"
-                          onClick={() => startEditMaster(m)}
-                          className="inline-flex items-center gap-1 text-xs font-medium text-teal-700 hover:underline"
-                        >
-                          <Edit className="w-3.5 h-3.5" /> दुरुस्ती
-                        </button>
-                      </td>
-                    )}
+          <div className="app-table-wrap">
+            {db.vaccineMaster.length === 0 ? (
+              <EmptyState message="अद्याप कोणतीही लस नोंदवलेली नाही." />
+            ) : (
+              <table className="app-table">
+                <thead className="app-thead">
+                  <tr>
+                    <th className="app-th">क्रम</th>
+                    <th className="app-th">लस नाव</th>
+                    <th className="app-th">कोड</th>
+                    <th className="app-th">प्रवर्ग</th>
+                    <th className="app-th">स्थिती</th>
+                    {isAdmin && <th className="app-th text-right">दुरुस्ती</th>}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {db.vaccineMaster.map((m) => (
+                    <tr key={m.id} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="app-td font-mono-tabular text-xs">{m.displayOrder}</td>
+                      <td className="app-td font-semibold text-slate-900">{m.vaccineName}</td>
+                      <td className="app-td font-mono-tabular text-xs">{m.shortCode}</td>
+                      <td className="app-td text-xs text-slate-600">{m.applicableCategory}</td>
+                      <td className="app-td text-xs">
+                        <span className={m.isActive ? 'text-emerald-700 font-semibold' : 'text-rose-700 font-medium'}>
+                          {m.isActive ? 'सक्रिय' : 'निष्क्रिय'}
+                        </span>
+                      </td>
+                      {isAdmin && (
+                        <td className="app-td text-right">
+                          <button
+                            type="button"
+                            onClick={() => startEditMaster(m)}
+                            className="inline-flex items-center gap-1 text-xs font-medium text-teal-700 hover:underline whitespace-nowrap"
+                          >
+                            <Edit className="w-3.5 h-3.5" /> दुरुस्ती
+                          </button>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
         </div>
       ) : (
@@ -351,10 +353,10 @@ export const VaccineMasterPage: React.FC = () => {
                 e.preventDefault();
                 setConfirmAction('SCHEDULE');
               }}
-              className="bg-white p-5 rounded-xl border border-slate-200 space-y-4"
+              className="app-card app-card-body space-y-4"
             >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 text-sm font-bold text-slate-800">
+              <div className="flex items-center justify-between gap-2">
+                <div className="app-section-title">
                   <PlusCircle className="w-4 h-4 text-teal-700" />
                   {editSchedule ? 'वेळापत्रक नियम दुरुस्ती' : 'नवीन डोस वेळापत्रक जोडा'}
                 </div>
@@ -362,7 +364,7 @@ export const VaccineMasterPage: React.FC = () => {
                   <button
                     type="button"
                     onClick={resetSchedule}
-                    className="text-xs text-slate-600 hover:underline"
+                    className="text-xs font-medium text-teal-700 hover:underline whitespace-nowrap shrink-0"
                   >
                     रद्द करा
                   </button>
@@ -371,12 +373,12 @@ export const VaccineMasterPage: React.FC = () => {
 
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-slate-700 mb-1">लस *</label>
+                  <label className="app-label">लस *</label>
                   <select
                     required
                     value={schVaccineId}
                     onChange={(e) => setSchVaccineId(e.target.value)}
-                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white"
+                    className="app-input"
                   >
                     <option value="">निवडा...</option>
                     {db.vaccineMaster.map((v) => (
@@ -387,32 +389,32 @@ export const VaccineMasterPage: React.FC = () => {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-700 mb-1">डोस नाव *</label>
+                  <label className="app-label">डोस नाव *</label>
                   <input
                     required
                     value={doseName}
                     onChange={(e) => setDoseName(e.target.value)}
                     placeholder="उदा. Penta-1"
-                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                    className="app-input"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-700 mb-1">डोस क्रम *</label>
+                  <label className="app-label">डोस क्रम *</label>
                   <input
                     type="number"
                     required
                     min={1}
                     value={doseOrder}
                     onChange={(e) => setDoseOrder(Number(e.target.value))}
-                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono-tabular"
+                    className="app-input font-mono-tabular"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-700 mb-1">मागील डोस (ऐच्छिक)</label>
+                  <label className="app-label">मागील डोस (ऐच्छिक)</label>
                   <select
                     value={previousDoseId}
                     onChange={(e) => setPreviousDoseId(e.target.value)}
-                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white"
+                    className="app-input"
                   >
                     <option value="">काहीही नाही</option>
                     {db.vaccineSchedule.map((s) => (
@@ -424,19 +426,19 @@ export const VaccineMasterPage: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-slate-700 mb-1">किमान वय</label>
+                  <label className="app-label">किमान वय</label>
                   <div className="flex gap-1.5">
                     <input
                       type="number"
                       min={0}
                       value={minAgeValue}
                       onChange={(e) => setMinAgeValue(Number(e.target.value))}
-                      className="w-20 border border-slate-300 rounded-lg px-2 py-2 text-sm font-mono-tabular"
+                      className="app-input w-20 px-2 font-mono-tabular"
                     />
                     <select
                       value={minAgeUnit}
                       onChange={(e) => setMinAgeUnit(e.target.value as AgeUnit)}
-                      className="flex-1 border border-slate-300 rounded-lg px-2 py-2 text-sm bg-white"
+                      className="app-input flex-1 px-2"
                     >
                       <option value="DAYS">DAYS</option>
                       <option value="WEEKS">WEEKS</option>
@@ -447,19 +449,19 @@ export const VaccineMasterPage: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-slate-700 mb-1">शिफारस वय</label>
+                  <label className="app-label">शिफारस वय</label>
                   <div className="flex gap-1.5">
                     <input
                       type="number"
                       min={0}
                       value={recommendedAgeValue}
                       onChange={(e) => setRecommendedAgeValue(Number(e.target.value))}
-                      className="w-20 border border-slate-300 rounded-lg px-2 py-2 text-sm font-mono-tabular"
+                      className="app-input w-20 px-2 font-mono-tabular"
                     />
                     <select
                       value={recommendedAgeUnit}
                       onChange={(e) => setRecommendedAgeUnit(e.target.value as AgeUnit)}
-                      className="flex-1 border border-slate-300 rounded-lg px-2 py-2 text-sm bg-white"
+                      className="app-input flex-1 px-2"
                     >
                       <option value="DAYS">DAYS</option>
                       <option value="WEEKS">WEEKS</option>
@@ -470,19 +472,19 @@ export const VaccineMasterPage: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-slate-700 mb-1">कमाल वय (ऐच्छिक)</label>
+                  <label className="app-label">कमाल वय (ऐच्छिक)</label>
                   <div className="flex gap-1.5">
                     <input
                       type="number"
                       min={0}
                       value={maxAgeValue}
                       onChange={(e) => setMaxAgeValue(e.target.value)}
-                      className="w-20 border border-slate-300 rounded-lg px-2 py-2 text-sm font-mono-tabular"
+                      className="app-input w-20 px-2 font-mono-tabular"
                     />
                     <select
                       value={maxAgeUnit}
                       onChange={(e) => setMaxAgeUnit(e.target.value as AgeUnit)}
-                      className="flex-1 border border-slate-300 rounded-lg px-2 py-2 text-sm bg-white"
+                      className="app-input flex-1 px-2"
                     >
                       <option value="DAYS">DAYS</option>
                       <option value="WEEKS">WEEKS</option>
@@ -493,103 +495,97 @@ export const VaccineMasterPage: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-slate-700 mb-1">
-                    किमान अंतर (दिवस)
-                  </label>
+                  <label className="app-label">किमान अंतर (दिवस)</label>
                   <input
                     type="number"
                     min={0}
                     value={minIntervalDays}
                     onChange={(e) => setMinIntervalDays(e.target.value)}
                     placeholder="उदा. 28"
-                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono-tabular"
+                    className="app-input font-mono-tabular"
                   />
                 </div>
 
                 <div className="md:col-span-2">
-                  <label className="block text-xs font-medium text-slate-700 mb-1">
-                    मराठी नियम वर्णन *
-                  </label>
+                  <label className="app-label">मराठी नियम वर्णन *</label>
                   <input
                     required
                     value={recommendedDueRuleText}
                     onChange={(e) => setRecommendedDueRuleText(e.target.value)}
                     placeholder="उदा. ६ आठवडे"
-                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                    className="app-input"
                   />
                 </div>
 
                 <div className="md:col-span-2 flex flex-wrap items-center gap-4 pt-5 text-xs">
-                  <label className="flex items-center gap-1.5">
+                  <label className="flex items-center gap-1.5 cursor-pointer">
                     <input
                       type="checkbox"
                       checked={isBooster}
                       onChange={(e) => setIsBooster(e.target.checked)}
+                      className="w-4 h-4 accent-teal-700"
                     />
                     बूस्टर डोस
                   </label>
-                  <label className="flex items-center gap-1.5 font-semibold text-emerald-800">
+                  <label className="flex items-center gap-1.5 font-semibold text-emerald-800 cursor-pointer">
                     <input
                       type="checkbox"
                       checked={isValidated}
                       onChange={(e) => setIsValidated(e.target.checked)}
+                      className="w-4 h-4 accent-teal-700"
                     />
                     प्रशासकाद्वारे प्रमाणित (Validated)
                   </label>
-                  <label className="flex items-center gap-1.5">
+                  <label className="flex items-center gap-1.5 cursor-pointer">
                     <input
                       type="checkbox"
                       checked={schActive}
                       onChange={(e) => setSchActive(e.target.checked)}
+                      className="w-4 h-4 accent-teal-700"
                     />
                     सक्रिय
                   </label>
                 </div>
               </div>
 
-              <button
-                type="submit"
-                className="px-5 py-2 rounded-lg bg-teal-700 hover:bg-teal-800 text-white text-sm font-semibold"
-              >
+              <button type="submit" className="app-btn-primary">
                 {editSchedule ? 'वेळापत्रक अद्यतनित करा' : 'वेळापत्रक जतन करा'}
               </button>
             </form>
           )}
 
-          <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto">
+          <div className="app-table-wrap">
             {db.vaccineSchedule.length === 0 ? (
-              <div className="p-8 text-center text-sm text-slate-500">
-                कोणतेही वेळापत्रक नोंदवलेले नाही. वरून "राष्ट्रीय लसीकरण वेळापत्रक (NIS) भरा" बटण वापरा.
-              </div>
+              <EmptyState message='कोणतेही वेळापत्रक नोंदवलेले नाही. वरून "राष्ट्रीय लसीकरण वेळापत्रक (NIS) भरा" बटण वापरा.' />
             ) : (
-              <table className="w-full text-sm text-left">
-                <thead className="bg-slate-50 text-slate-600 text-xs border-b border-slate-200">
+              <table className="app-table">
+                <thead className="app-thead">
                   <tr>
-                    <th className="px-4 py-3 font-semibold">क्रम</th>
-                    <th className="px-4 py-3 font-semibold">डोस</th>
-                    <th className="px-4 py-3 font-semibold">किमान / शिफारस वय</th>
-                    <th className="px-4 py-3 font-semibold">अंतर (दिवस)</th>
-                    <th className="px-4 py-3 font-semibold">नियम</th>
-                    <th className="px-4 py-3 font-semibold">प्रमाणित</th>
-                    {isAdmin && <th className="px-4 py-3 font-semibold text-right">दुरुस्ती</th>}
+                    <th className="app-th">क्रम</th>
+                    <th className="app-th">डोस</th>
+                    <th className="app-th">किमान / शिफारस वय</th>
+                    <th className="app-th">अंतर (दिवस)</th>
+                    <th className="app-th">नियम</th>
+                    <th className="app-th">प्रमाणित</th>
+                    {isAdmin && <th className="app-th text-right">दुरुस्ती</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {db.vaccineSchedule.map((s) => (
-                    <tr key={s.id} className="hover:bg-slate-50">
-                      <td className="px-4 py-2.5 font-mono-tabular text-xs">{s.doseOrder}</td>
-                      <td className="px-4 py-2.5">
+                    <tr key={s.id} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="app-td font-mono-tabular text-xs">{s.doseOrder}</td>
+                      <td className="app-td">
                         <div className="font-semibold text-slate-900">{s.doseName}</div>
                         <div className="text-xs text-slate-500">{s.vaccineName}</div>
                       </td>
-                      <td className="px-4 py-2.5 text-xs font-mono-tabular">
+                      <td className="app-td text-xs font-mono-tabular">
                         {s.minAgeValue} {s.minAgeUnit} · {s.recommendedAgeValue} {s.recommendedAgeUnit}
                       </td>
-                      <td className="px-4 py-2.5 text-xs font-mono-tabular">
+                      <td className="app-td text-xs font-mono-tabular">
                         {s.minIntervalDays ? `${s.minIntervalDays} दिवस` : '-'}
                       </td>
-                      <td className="px-4 py-2.5 text-xs text-slate-700">{s.recommendedDueRuleText}</td>
-                      <td className="px-4 py-2.5 text-xs">
+                      <td className="app-td text-xs text-slate-700">{s.recommendedDueRuleText}</td>
+                      <td className="app-td text-xs">
                         {s.isValidated && s.isActive ? (
                           <span className="inline-flex items-center gap-1 font-semibold text-emerald-700">
                             <CheckCircle2 className="w-3.5 h-3.5" /> प्रमाणित
@@ -599,11 +595,11 @@ export const VaccineMasterPage: React.FC = () => {
                         )}
                       </td>
                       {isAdmin && (
-                        <td className="px-4 py-2.5 text-right">
+                        <td className="app-td text-right">
                           <button
                             type="button"
                             onClick={() => startEditSchedule(s)}
-                            className="inline-flex items-center gap-1 text-xs font-medium text-teal-700 hover:underline"
+                            className="inline-flex items-center gap-1 text-xs font-medium text-teal-700 hover:underline whitespace-nowrap"
                           >
                             <Edit className="w-3.5 h-3.5" /> दुरुस्ती
                           </button>
@@ -620,11 +616,11 @@ export const VaccineMasterPage: React.FC = () => {
 
       <ConfirmModal
         open={Boolean(confirmAction)}
-        title="Google Sheet मध्ये बदल जतन करायचे का?"
+        title="प्रणालीत बदल जतन करायचे का?"
         description={
           confirmAction === 'SEED_NIS'
-            ? 'राष्ट्रीय लसीकरण वेळापत्रक (BCG, OPV, Penta, Rota, fIPV, PCV, MR, DPT, Td) Google Sheet मध्ये जोडले जाईल.'
-            : 'तुम्ही केलेले बदल थेट Google Sheet मध्ये नोंदवले जातील.'
+            ? 'राष्ट्रीय लसीकरण वेळापत्रक (BCG, OPV, Penta, Rota, fIPV, PCV, MR, DPT, Td) प्रणालीत जोडले जाईल.'
+            : 'तुम्ही केलेले बदल प्रणालीत नोंदवले जातील.'
         }
         loading={busy}
         onConfirm={handleConfirm}

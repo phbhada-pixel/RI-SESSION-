@@ -16,6 +16,7 @@ import {
   PlusCircle,
   Save,
   Search,
+  Syringe,
   Trash2,
   UserCheck,
   UserPlus,
@@ -43,6 +44,8 @@ import { evaluateBeneficiaryEligibility } from '../utils/eligibilityEngine';
 import { normalizeBeneficiaryDedupeKey, normalizeDedupeKey } from '../services/googleSheetsService';
 import {
   CASTE_CATEGORIES,
+  VITAL_METRIC_DEFS,
+  buildVitalsComparisonSummary,
   calculateEddFromMcDate,
   calculateGestationalAgeLabel,
   formatDeliveryFacilityTypeMarathi,
@@ -54,12 +57,17 @@ import { canViewFullAadhaar, maskAadhaar, sanitizeOptionalAadhaar } from '../uti
 import {
   buildDetailedSessionReportData,
   buildMaternalSessionReportData,
+  downloadBeneficiaryConsolidatedPDF,
   downloadDetailedSessionPDF,
   downloadMaternalSessionPDF,
 } from '../utils/sessionPdfReport';
+import { VitalsComparisonCard } from '../components/VitalsComparisonCard';
 import { SessionReportPreviewModal } from '../components/SessionReportPreviewModal';
+import { fuzzyFilterAndRank } from '../utils/fuzzySearch';
+import { FuzzyAutocomplete } from '../components/FuzzyAutocomplete';
 import { SearchableSelect } from '../components/SearchableSelect';
 import { ConfirmModal } from '../components/ConfirmModal';
+import { PageHeader } from '../components/PageHeader';
 import { Toast } from '../components/Toast';
 
 type ActiveActionMode = 'NONE' | 'NEW_BENEFICIARY' | 'SELECT_EXISTING';
@@ -96,6 +104,7 @@ export const TodaySessionPage: React.FC = () => {
 
   const [params, setParams] = useSearchParams();
   const preselectedSessionId = params.get('sessionId') || '';
+  const preselectedRecordBenId = params.get('recordBenId') || '';
 
   const scopedSubcentre =
     currentUser && ['CHO', 'ANM'].includes(currentUser.role) ? currentUser.subcentreId || '' : '';
@@ -106,8 +115,22 @@ export const TodaySessionPage: React.FC = () => {
   const [selectedVillageId, setSelectedVillageId] = useState('');
   const [selectedSessionId, setSelectedSessionId] = useState(preselectedSessionId);
 
-  // Mode toggle: A (New Registration) vs B (Select Existing)
+  // Mode toggle: A (New Registration Pop-up) vs B (Select Existing Pop-up)
   const [actionMode, setActionMode] = useState<ActiveActionMode>('NONE');
+
+  // Post-Registration / Quick Today's Dose Screen Pop-up (U-WIN style)
+  const [doseModalTarget, setDoseModalTarget] = useState<{
+    beneficiary: Beneficiary;
+    episode: PregnancyEpisode | null;
+    isNewlyRegistered?: boolean;
+  } | null>(null);
+  const [doseModalTicks, setDoseModalTicks] = useState<Record<string, boolean>>({});
+  const [doseModalBatch, setDoseModalBatch] = useState<Record<string, string>>({});
+  const [doseModalRemarks, setDoseModalRemarks] = useState('');
+  const [doseModalAncChecked, setDoseModalAncChecked] = useState<Record<string, boolean>>({});
+  const [doseModalAncValue, setDoseModalAncValue] = useState<Record<string, string>>({});
+  const [doseModalAncBatch, setDoseModalAncBatch] = useState<Record<string, string>>({});
+  const [doseModalChildVitals, setDoseModalChildVitals] = useState<Record<string, string>>({});
 
   // --- Option A: Inline New Beneficiary Registration State ---
   const [newBenType, setNewBenType] = useState<BeneficiaryType>('CHILD');
@@ -290,6 +313,60 @@ export const TodaySessionPage: React.FC = () => {
       setNewDeliveryPlace(selectedSession.villageName);
     }
   }, [selectedSession]);
+
+  // Reset dose modal form inputs whenever target beneficiary changes
+  useEffect(() => {
+    setDoseModalTicks({});
+    setDoseModalBatch({});
+    setDoseModalRemarks('');
+    setDoseModalAncChecked({});
+    setDoseModalAncValue({});
+    setDoseModalAncBatch({});
+    setDoseModalChildVitals({});
+  }, [doseModalTarget?.beneficiary.id]);
+
+  // Support opening Dose Modal directly via ?recordBenId=... query param
+  useEffect(() => {
+    if (!db || !selectedSession || !preselectedRecordBenId) return;
+    if (!getSessionEditStatus(selectedSession).isOpen) return;
+    const foundBen = db.beneficiaries.find((b) => b.id === preselectedRecordBenId);
+    if (!foundBen) return;
+
+    const eps = db.pregnancyEpisodes
+      .filter((ep) => ep.beneficiaryId === foundBen.id)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const activeEp = eps.find((e) => e.pregnancyStatus === 'सक्रिय') || eps[0] || null;
+    const inSession = db.sessionBeneficiaries.some(
+      (sb) => sb.sessionId === selectedSession.id && sb.beneficiaryId === foundBen.id
+    );
+
+    const openTarget = async () => {
+      if (!inSession) {
+        try {
+          await addBeneficiaryToSession(
+            selectedSession,
+            foundBen,
+            'NEW',
+            '',
+            activeEp?.id || ''
+          );
+        } catch {
+          // ignore if already present concurrently
+        }
+      }
+      if ((foundBen.beneficiaryType || 'CHILD') === 'PREGNANT_WOMAN') {
+        setActiveMaternalBenId(foundBen.id);
+      }
+      setDoseModalTarget({
+        beneficiary: foundBen,
+        episode: activeEp,
+        isNewlyRegistered: true,
+      });
+      setParams({ sessionId: selectedSession.id });
+    };
+
+    void openTarget();
+  }, [db, selectedSession, preselectedRecordBenId, addBeneficiaryToSession, setParams]);
 
   const editStatus = selectedSession ? getSessionEditStatus(selectedSession) : null;
 
@@ -506,42 +583,45 @@ export const TodaySessionPage: React.FC = () => {
   }, [db, newBenType, newChildName, newMotherName, newGuardianName, newDob, newMobile, newAadhaar]);
 
   // Search results for Option B (Category-First Existing Beneficiary Search)
-  const existingSearchResults = useMemo(() => {
+  const baseExistingBeneficiaries = useMemo(() => {
     if (!db) return [];
-    const q = searchQuery.trim().toLowerCase();
     return db.beneficiaries
       .filter((b) => b.status === 'सक्रिय' && (b.beneficiaryType || 'CHILD') === searchBenType)
       .filter((b) => !searchSubcentreId || b.subcentreId === searchSubcentreId)
-      .filter((b) => !searchVillageId || b.villageId === searchVillageId)
-      .filter((b) => {
-        if (!q) return true;
-        const dobDisplay = formatDDMMYYYY(b.dob).toLowerCase();
-        const eps = episodesByBeneficiary.get(b.id) || [];
-        const epMatch =
-          searchBenType === 'PREGNANT_WOMAN' &&
-          eps.some(
-            (ep) =>
-              ep.episodeCode.toLowerCase().includes(q) ||
-              ep.mcDate.includes(q) ||
-              formatDDMMYYYY(ep.mcDate).includes(q) ||
-              ep.eddDate.includes(q) ||
-              formatDDMMYYYY(ep.eddDate).includes(q)
-          );
-        return (
-          b.childName.toLowerCase().includes(q) ||
-          b.beneficiaryCode.toLowerCase().includes(q) ||
-          b.motherName.toLowerCase().includes(q) ||
-          b.fatherName.toLowerCase().includes(q) ||
-          (b.guardianName || '').toLowerCase().includes(q) ||
-          b.villageName.toLowerCase().includes(q) ||
-          b.dob.toLowerCase().includes(q) ||
-          dobDisplay.includes(q) ||
-          b.mobile.toLowerCase().includes(q) ||
-          epMatch
-        );
-      })
-      .slice(0, 40);
-  }, [db, searchBenType, searchQuery, searchSubcentreId, searchVillageId, episodesByBeneficiary]);
+      .filter((b) => !searchVillageId || b.villageId === searchVillageId);
+  }, [db, searchBenType, searchSubcentreId, searchVillageId]);
+
+  const getExistingSearchFields = (b: Beneficiary) => {
+    const dobDisplay = formatDDMMYYYY(b.dob);
+    const eps = searchBenType === 'PREGNANT_WOMAN' ? episodesByBeneficiary.get(b.id) || [] : [];
+    const epFields = eps.flatMap((ep) => [
+      ep.episodeCode,
+      ep.mcDate,
+      formatDDMMYYYY(ep.mcDate),
+      ep.eddDate,
+      formatDDMMYYYY(ep.eddDate),
+    ]);
+    return [
+      b.childName,
+      b.beneficiaryCode,
+      b.motherName,
+      b.fatherName,
+      b.guardianName,
+      b.villageName,
+      b.dob,
+      dobDisplay,
+      b.mobile,
+      ...epFields,
+    ];
+  };
+
+  const existingSearchResults = useMemo(() => {
+    return fuzzyFilterAndRank(
+      baseExistingBeneficiaries,
+      searchQuery,
+      getExistingSearchFields
+    ).slice(0, 40);
+  }, [baseExistingBeneficiaries, searchQuery, searchBenType, episodesByBeneficiary]);
 
   const inspectedBeneficiarySummary = useMemo(() => {
     if (!db || !selectedSession || !inspectedBenId) return null;
@@ -669,7 +749,9 @@ export const TodaySessionPage: React.FC = () => {
   if (!db) return null;
 
   const canModifySession = Boolean(
-    editStatus?.isOpen &&
+    selectedSession &&
+      editStatus?.isOpen &&
+      !['पूर्ण', 'लॉक', 'रद्द'].includes(selectedSession.status) &&
       currentUser &&
       ['ADMIN', 'MEDICAL_OFFICER', 'DATA_OPERATOR', 'CHO', 'ANM'].includes(currentUser.role)
   );
@@ -801,6 +883,12 @@ export const TodaySessionPage: React.FC = () => {
       setNewGravida('');
       setConfirmRegisterOpen(false);
       setActionMode('NONE');
+      // Immediately open Today's Session Dose / Service Screen for the newly registered beneficiary
+      setDoseModalTarget({
+        beneficiary: res.beneficiary,
+        episode: res.episode || null,
+        isNewlyRegistered: true,
+      });
     } catch (err) {
       setNewFormError(err instanceof Error ? err.message : 'नोंदणी करताना त्रुटी आली.');
       setConfirmRegisterOpen(false);
@@ -813,24 +901,37 @@ export const TodaySessionPage: React.FC = () => {
     if (!selectedSession || !confirmAddExistingBen) return;
     setBusy(true);
     try {
+      const targetBen = confirmAddExistingBen.ben;
+      const targetEpId = confirmAddExistingBen.episodeId || '';
       await addBeneficiaryToSession(
         selectedSession,
-        confirmAddExistingBen.ben,
+        targetBen,
         'EXISTING',
         '',
-        confirmAddExistingBen.episodeId || ''
+        targetEpId
       );
-      if ((confirmAddExistingBen.ben.beneficiaryType || 'CHILD') === 'PREGNANT_WOMAN') {
-        setActiveMaternalBenId(confirmAddExistingBen.ben.id);
+      if ((targetBen.beneficiaryType || 'CHILD') === 'PREGNANT_WOMAN') {
+        setActiveMaternalBenId(targetBen.id);
       }
+      const eps = episodesByBeneficiary.get(targetBen.id) || [];
+      const resolvedEp =
+        (targetEpId ? eps.find((e) => e.id === targetEpId) : undefined) ||
+        eps.find((e) => e.pregnancyStatus === 'सक्रिय') ||
+        eps[0] ||
+        null;
       setToast({
-        msg: `${confirmAddExistingBen.ben.childName} (${confirmAddExistingBen.ben.beneficiaryCode}) आजच्या सत्रात समाविष्ट केले गेले.`,
+        msg: `${targetBen.childName} (${targetBen.beneficiaryCode}) आजच्या सत्रात समाविष्ट केले गेले.`,
         type: 'success',
       });
       setConfirmAddExistingBen(null);
       setInspectedBenId('');
       setSelectedEpisodeForExisting('');
       setActionMode('NONE');
+      setDoseModalTarget({
+        beneficiary: targetBen,
+        episode: resolvedEp,
+        isNewlyRegistered: false,
+      });
     } catch (err) {
       setToast({ msg: err instanceof Error ? err.message : 'त्रुटी आली.', type: 'error' });
       setConfirmAddExistingBen(null);
@@ -931,7 +1032,7 @@ export const TodaySessionPage: React.FC = () => {
       setSelectedTicks({});
       setConfirmSaveTicksOpen(false);
       setToast({
-        msg: `आज दिलेले ${pendingTickEntries.length} बालक लस डोस Google Sheet मध्ये यशस्वीरित्या जतन झाले.`,
+        msg: `आज दिलेले ${pendingTickEntries.length} बालक लस डोस यशस्वीरित्या जतन झाले.`,
         type: 'success',
       });
     } catch (err) {
@@ -972,12 +1073,103 @@ export const TodaySessionPage: React.FC = () => {
       });
       setConfirmSaveAncOpen(false);
       setToast({
-        msg: `${activeMaternalRow.ben.childName} यांच्या आजच्या ${savedCount} ANC सेवा Google Sheet मध्ये जतन झाल्या.`,
+        msg: `${activeMaternalRow.ben.childName} यांच्या आजच्या ${savedCount} ANC सेवा जतन झाल्या.`,
         type: 'success',
       });
     } catch (err) {
       setToast({ msg: err instanceof Error ? err.message : 'त्रुटी आली.', type: 'error' });
       setConfirmSaveAncOpen(false);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleSaveDoseModalChild = async (
+    targetBen: Beneficiary,
+    dueSchedules: VaccineSchedule[]
+  ) => {
+    if (!selectedSession || !canModifySession) return;
+    const selectedSchedules = dueSchedules.filter((s) => Boolean(doseModalTicks[s.id]));
+    const vitalsEntries = VITAL_METRIC_DEFS.filter(
+      (def) => (doseModalChildVitals[def.code] || '').trim().length > 0
+    );
+    if (selectedSchedules.length === 0 && vitalsEntries.length === 0) return;
+
+    setBusy(true);
+    try {
+      if (selectedSchedules.length > 0) {
+        await administerVaccineDoses(
+          selectedSession,
+          selectedSchedules.map((sch) => ({
+            beneficiary: targetBen,
+            schedule: sch,
+            administeredDate: selectedSession.sessionDate,
+            batchNumber: (doseModalBatch[sch.id] || '').trim(),
+            remarks: doseModalRemarks.trim(),
+          }))
+        );
+      }
+      if (vitalsEntries.length > 0) {
+        await recordMaternalServices(
+          selectedSession,
+          vitalsEntries.map((def) => ({
+            beneficiary: targetBen,
+            episode: null,
+            serviceCode: def.code,
+            serviceName: def.label,
+            serviceValue: (doseModalChildVitals[def.code] || '').trim(),
+            batchNumber: '',
+            remarks: doseModalRemarks.trim(),
+            visitDate: selectedSession.sessionDate,
+          }))
+        );
+      }
+      const parts: string[] = [];
+      if (selectedSchedules.length > 0) parts.push(`${selectedSchedules.length} लस डोस`);
+      if (vitalsEntries.length > 0) parts.push(`${vitalsEntries.length} वाढ/तपासणी नोंदी`);
+      setToast({
+        msg: `${targetBen.childName} यांच्या आजच्या ${parts.join(' व ')} यशस्वीरित्या जतन झाल्या.`,
+        type: 'success',
+      });
+      setDoseModalTarget(null);
+    } catch (err) {
+      setToast({ msg: err instanceof Error ? err.message : 'त्रुटी आली.', type: 'error' });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleSaveDoseModalMaternal = async (
+    targetBen: Beneficiary,
+    episode: PregnancyEpisode
+  ) => {
+    if (!selectedSession || !canModifySession) return;
+    const selectedSvcs = activeMaternalCatalog.filter((svc) =>
+      Boolean(doseModalAncChecked[svc.serviceCode])
+    );
+    if (selectedSvcs.length === 0) return;
+    setBusy(true);
+    try {
+      await recordMaternalServices(
+        selectedSession,
+        selectedSvcs.map((svc) => ({
+          beneficiary: targetBen,
+          episode,
+          serviceCode: svc.serviceCode,
+          serviceName: svc.serviceName,
+          serviceValue: (doseModalAncValue[svc.serviceCode] || '').trim() || 'पूर्ण',
+          batchNumber: (doseModalAncBatch[svc.serviceCode] || '').trim(),
+          remarks: doseModalRemarks.trim(),
+          visitDate: selectedSession.sessionDate,
+        }))
+      );
+      setToast({
+        msg: `${targetBen.childName} यांच्या आजच्या ${selectedSvcs.length} ANC / Td सेवा जतन झाल्या.`,
+        type: 'success',
+      });
+      setDoseModalTarget(null);
+    } catch (err) {
+      setToast({ msg: err instanceof Error ? err.message : 'त्रुटी आली.', type: 'error' });
     } finally {
       setBusy(false);
     }
@@ -1003,8 +1195,12 @@ export const TodaySessionPage: React.FC = () => {
     try {
       await completeSession(selectedSession.id);
       setCompletionModalOpen(false);
+      setActionMode('NONE');
+      setDoseModalTarget(null);
+      setEditProfileBen(null);
+      setAddEpForBen(null);
       setToast({
-        msg: `लसीकरण सत्र (${selectedSession.sessionCode}) पूर्ण झाले! आता आपण बालक व माता PDF अहवाल डाउनलोड करू शकता.`,
+        msg: `लसीकरण सत्र (${selectedSession.sessionCode}) बंद / पूर्ण झाले! यापुढे डेटा एन्ट्री बंद राहील. आपण सर्व अहवाल PDF डाउनलोड करू शकता.`,
         type: 'success',
       });
     } catch (err) {
@@ -1047,56 +1243,68 @@ export const TodaySessionPage: React.FC = () => {
     }
   };
 
+  const handleDownloadConsolidatedPdf = async (beneficiaryId: string) => {
+    if (!db) return;
+    setPdfDownloading(true);
+    try {
+      const preparedBy = currentUser ? `${currentUser.name} (${currentUser.role})` : 'PHC Bhada';
+      await downloadBeneficiaryConsolidatedPDF(db, beneficiaryId, preparedBy);
+      setToast({ msg: 'लाभार्थ्याचे एकत्रित संपूर्ण रेकॉर्ड PDF डाउनलोड झाले.', type: 'success' });
+    } catch (err) {
+      setToast({
+        msg: err instanceof Error ? err.message : 'PDF तयार करताना त्रुटी आली.',
+        type: 'error',
+      });
+    } finally {
+      setPdfDownloading(false);
+    }
+  };
+
   const todayIST = getTodayIST();
 
   return (
-    <div className="space-y-6">
+    <div className="app-page">
       {/* Page Title & Separate Child / Maternal PDF Report Buttons */}
-      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-bold text-slate-900">
-            आजचे लसीकरण सत्र – लाभार्थी व्यवस्थापन
-          </h2>
-          <p className="text-xs text-slate-500">
-            बालक व गरोदर माता स्वतंत्र प्रोफाइल व्यवस्थापन, कायमस्वरूपी प्रोफाइल कॅरी-फॉरवर्ड आणि स्वतंत्र सविस्तर PDF अहवाल
-          </p>
-        </div>
-
-        {selectedSession && childReportData && maternalReportData && (
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setReportPreviewCategory('CHILD');
-                setReportPreviewOpen(true);
-              }}
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 whitespace-nowrap"
-            >
-              <Eye className="w-4 h-4 text-teal-700" /> अहवाल पूर्वावलोकन / Print / Excel
-            </button>
-            <button
-              type="button"
-              disabled={pdfDownloading}
-              onClick={handleDownloadChildPdf}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg whitespace-nowrap disabled:opacity-50"
-            >
-              <Download className="w-4 h-4" /> बालक अहवाल PDF
-            </button>
-            <button
-              type="button"
-              disabled={pdfDownloading}
-              onClick={handleDownloadMaternalPdf}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-slate-800 hover:bg-slate-900 rounded-lg whitespace-nowrap disabled:opacity-50"
-            >
-              <Download className="w-4 h-4" /> गरोदर माता ANC अहवाल PDF
-            </button>
-          </div>
-        )}
-      </div>
+      <PageHeader
+        title="आजचे लसीकरण सत्र – लाभार्थी व्यवस्थापन"
+        subtitle="बालक व गरोदर माता स्वतंत्र प्रोफाइल व्यवस्थापन, कायमस्वरूपी प्रोफाइल कॅरी-फॉरवर्ड आणि स्वतंत्र सविस्तर PDF अहवाल"
+        actions={
+          selectedSession && childReportData && maternalReportData ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setReportPreviewCategory('CHILD');
+                  setReportPreviewOpen(true);
+                }}
+                className="app-btn-secondary text-xs"
+              >
+                <Eye className="w-4 h-4 text-teal-700" /> अहवाल पूर्वावलोकन / Print / Excel
+              </button>
+              <button
+                type="button"
+                disabled={pdfDownloading}
+                onClick={handleDownloadChildPdf}
+                className="app-btn-primary text-xs"
+              >
+                <Download className="w-4 h-4" /> बालक अहवाल PDF
+              </button>
+              <button
+                type="button"
+                disabled={pdfDownloading}
+                onClick={handleDownloadMaternalPdf}
+                className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-slate-800 hover:bg-slate-900 rounded-lg whitespace-nowrap shrink-0 disabled:opacity-50 transition-colors"
+              >
+                <Download className="w-4 h-4" /> गरोदर माता ANC अहवाल PDF
+              </button>
+            </div>
+          ) : undefined
+        }
+      />
 
       {/* Step 1-4 Cascading Session Selector */}
-      <div className="bg-white p-4 md:p-5 rounded-xl border border-slate-200 space-y-4">
-        <div className="flex items-center gap-2 text-sm font-bold text-slate-800">
+      <div className="app-card app-card-body space-y-4">
+        <div className="app-section-title">
           <CalendarCheck className="w-4 h-4 text-teal-700" /> लसीकरण सत्र निवडा (दिनांक → उपकेंद्र → गाव → सत्र)
         </div>
 
@@ -1254,82 +1462,106 @@ export const TodaySessionPage: React.FC = () => {
         </div>
       )}
 
-      {/* Two Prominent Beneficiary Action Options: A (New) & B (Select Existing) */}
+      {/* Closed / Locked Session Notice */}
+      {selectedSession && editStatus && !editStatus.isOpen && (
+        <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 flex items-start gap-3 text-xs text-rose-950">
+          <Lock className="w-5 h-5 text-rose-700 shrink-0 mt-0.5" />
+          <div className="space-y-0.5">
+            <div className="text-sm font-bold text-rose-900">
+              सत्र बंद / लॉक — डेटा एन्ट्री बंद आहे ({selectedSession.status})
+            </div>
+            <p>
+              हे लसीकरण सत्र बंद/पूर्ण झालेले असल्यामुळे नवीन लाभार्थी जोडणे, लस डोस टिकमार्क करणे किंवा तपासणी नोंदी करणे बंद केले आहे. आपण सत्र अहवाल आणि प्रत्येक लाभार्थ्याचे संपूर्ण रेकॉर्ड PDF डाउनलोड करू शकता.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* U-WIN Style Quick Action Triggers: A (New Registration Pop-up) & B (Search Pop-up) */}
       {selectedSession && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <button
             type="button"
             disabled={!canModifySession}
-            onClick={() =>
-              setActionMode((prev) => (prev === 'NEW_BENEFICIARY' ? 'NONE' : 'NEW_BENEFICIARY'))
-            }
-            className={`text-left p-5 rounded-xl border transition-colors flex items-start gap-4 disabled:opacity-50 ${
-              actionMode === 'NEW_BENEFICIARY'
-                ? 'bg-teal-50 border-teal-600'
-                : 'bg-white border-slate-200 hover:border-teal-500'
-            }`}
+            onClick={() => {
+              setNewFormError('');
+              setActionMode('NEW_BENEFICIARY');
+            }}
+            className="text-left p-4 md:p-5 rounded-xl border border-teal-200 bg-white hover:border-teal-600 hover:bg-teal-50/40 transition-colors flex items-center justify-between gap-4 disabled:opacity-50"
           >
-            <div className="p-3 rounded-lg bg-teal-700 text-white shrink-0">
-              <UserPlus className="w-5 h-5" />
+            <div className="flex items-start gap-3.5 min-w-0">
+              <div className="p-3 rounded-lg bg-teal-700 text-white shrink-0">
+                <UserPlus className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-base font-bold text-slate-900">
+                  + नवीन लाभार्थी नोंदणी करा
+                </div>
+                <p className="text-xs text-slate-600 mt-0.5">
+                  बालक किंवा गरोदर माता नोंदवा — सेव केल्यावर लगेच आजचे डोस स्क्रीन उघडेल.
+                </p>
+              </div>
             </div>
-            <div className="min-w-0">
-              <div className="text-base font-bold text-slate-900">अ. नवीन लाभार्थी नोंदणी करा</div>
-              <p className="text-xs text-slate-600 mt-1">
-                बालक किंवा गरोदर माता निवडा; कायमस्वरूपी प्रोफाइल एकदाच Google Sheet मध्ये जतन करून सत्रात जोडा.
-              </p>
-            </div>
+            <span className="hidden sm:inline-flex items-center px-3 py-1.5 rounded-lg bg-teal-50 text-teal-800 border border-teal-200 text-xs font-semibold whitespace-nowrap shrink-0">
+              नोंदणी उघडा →
+            </span>
           </button>
 
           <button
             type="button"
             disabled={!canModifySession}
-            onClick={() =>
-              setActionMode((prev) => (prev === 'SELECT_EXISTING' ? 'NONE' : 'SELECT_EXISTING'))
-            }
-            className={`text-left p-5 rounded-xl border transition-colors flex items-start gap-4 disabled:opacity-50 ${
-              actionMode === 'SELECT_EXISTING'
-                ? 'bg-teal-50 border-teal-600'
-                : 'bg-white border-slate-200 hover:border-teal-500'
-            }`}
+            onClick={() => setActionMode('SELECT_EXISTING')}
+            className="text-left p-4 md:p-5 rounded-xl border border-slate-200 bg-white hover:border-teal-600 hover:bg-slate-50 transition-colors flex items-center justify-between gap-4 disabled:opacity-50"
           >
-            <div className="p-3 rounded-lg bg-slate-800 text-white shrink-0">
-              <UserCheck className="w-5 h-5" />
-            </div>
-            <div className="min-w-0">
-              <div className="text-base font-bold text-slate-900">
-                ब. मागील नोंदणीकृत लाभार्थी निवडा
+            <div className="flex items-start gap-3.5 min-w-0">
+              <div className="p-3 rounded-lg bg-slate-800 text-white shrink-0">
+                <Search className="w-5 h-5" />
               </div>
-              <p className="text-xs text-slate-600 mt-1">
-                आधी प्रकार (बालक / गरोदर माता) निवडा; कायमस्वरूपी माहिती व मागील इतिहास स्वयंचलित मिळवा आणि आजच्या सेवा नोंदवा.
-              </p>
+              <div className="min-w-0">
+                <div className="text-base font-bold text-slate-900">
+                  नोंदणीकृत लाभार्थी शोधा
+                </div>
+                <p className="text-xs text-slate-600 mt-0.5">
+                  नाव, आयडी, मोबाईल किंवा दिनांकाने शोधून आजच्या सत्रात निवडा व डोस द्या.
+                </p>
+              </div>
             </div>
+            <span className="hidden sm:inline-flex items-center px-3 py-1.5 rounded-lg bg-slate-100 text-slate-800 border border-slate-300 text-xs font-semibold whitespace-nowrap shrink-0">
+              शोध बॉक्स उघडा →
+            </span>
           </button>
         </div>
       )}
 
-      {/* OPTION A PANEL: Inline New Beneficiary Registration (Child OR Pregnant Woman) */}
+      {/* POP-UP MODAL A: U-WIN Style New Beneficiary Registration */}
       {selectedSession && canModifySession && actionMode === 'NEW_BENEFICIARY' && (
-        <form
-          onSubmit={handleValidateNewBeneficiary}
-          className="bg-white p-5 rounded-xl border border-teal-300 space-y-4"
-        >
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
-            <div>
-              <h3 className="text-base font-bold text-slate-900">
-                नवीन लाभार्थी नोंदणी (सत्र: {selectedSession.sessionCode})
-              </h3>
-              <p className="text-xs text-slate-500">
-                प्रथम श्रेणी निवडा. कायमस्वरूपी प्रोफाइल एकदाच जतन होईल व पुढील सर्व सत्रांत स्वयंचलित उपलब्ध राहील.
-              </p>
+        <div className="app-modal-backdrop" role="dialog" aria-modal="true" aria-label="नवीन लाभार्थी नोंदणी">
+          <form
+            onSubmit={handleValidateNewBeneficiary}
+            className="w-full max-w-4xl bg-white rounded-xl border border-slate-200 shadow-lg flex flex-col max-h-[92vh] overflow-hidden"
+          >
+            <div className="px-5 py-3.5 bg-teal-800 text-white flex items-center justify-between gap-3 shrink-0">
+              <div className="min-w-0">
+                <div className="text-[11px] text-teal-100 font-medium truncate">
+                  सत्र: <span className="font-mono-tabular">{selectedSession.sessionCode}</span> ·{' '}
+                  {selectedSession.villageName} · दि.{' '}
+                  <span className="font-mono-tabular">{formatDDMMYYYY(selectedSession.sessionDate)}</span>
+                </div>
+                <h3 className="text-base font-bold leading-snug">
+                  नवीन लाभार्थी नोंदणी (U-WIN नोंदणी स्क्रीन)
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActionMode('NONE')}
+                className="p-2 rounded-lg text-teal-100 hover:text-white hover:bg-teal-700/70 shrink-0"
+                aria-label="बंद करा"
+              >
+                <X className="w-5 h-5" />
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => setActionMode('NONE')}
-              className="p-1.5 text-slate-400 hover:text-slate-700 rounded"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
+
+            <div className="p-5 overflow-y-auto space-y-4 flex-1">
 
           {/* Beneficiary Category Selection */}
           <div className="flex flex-wrap items-center gap-2">
@@ -1686,45 +1918,59 @@ export const TodaySessionPage: React.FC = () => {
             </div>
           )}
 
-          <div className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-slate-100">
-            <button
-              type="button"
-              onClick={() => setActionMode('NONE')}
-              className="px-4 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 whitespace-nowrap"
-            >
-              रद्द करा
-            </button>
-            <button
-              type="submit"
-              disabled={busy || exactDuplicateExists}
-              className="px-5 py-2 rounded-lg bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold whitespace-nowrap disabled:opacity-50"
-            >
-              नोंदणी करा व आजच्या सत्रात समाविष्ट करा
-            </button>
-          </div>
-        </form>
+            </div>
+
+            <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2 shrink-0">
+              <span className="text-[11px] text-slate-600">
+                नोंदणी सेव केल्यावर लगेच आजच्या सत्रामध्ये द्यावयाच्या डोसचा स्क्रीन उघडेल.
+              </span>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActionMode('NONE')}
+                  className="app-btn-secondary"
+                >
+                  रद्द करा
+                </button>
+                <button
+                  type="submit"
+                  disabled={busy || exactDuplicateExists}
+                  className="app-btn-primary"
+                >
+                  नोंदणी सेव करा व आजचे डोस स्क्रीन उघडा →
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
       )}
 
-      {/* OPTION B PANEL: Category-First Existing Beneficiary Search & Profile Carry Forward */}
+      {/* POP-UP MODAL B: U-WIN Style Existing Beneficiary Search & Selection */}
       {selectedSession && canModifySession && actionMode === 'SELECT_EXISTING' && (
-        <div className="bg-white p-5 rounded-xl border border-slate-300 space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
-            <div>
-              <h3 className="text-base font-bold text-slate-900">
-                मागील नोंदणीकृत लाभार्थी शोधा व आजच्या सत्रात निवडा
-              </h3>
-              <p className="text-xs text-slate-500">
-                प्रथम श्रेणी निवडा — नाव, आयडी, मोबाईल, गाव, जन्मतारीख किंवा गरोदर मातांसाठी MC/EDD दिनांकाने शोधा
-              </p>
+        <div className="app-modal-backdrop" role="dialog" aria-modal="true" aria-label="नोंदणीकृत लाभार्थी शोध">
+          <div className="w-full max-w-5xl bg-white rounded-xl border border-slate-200 shadow-lg flex flex-col max-h-[92vh] overflow-hidden">
+            <div className="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between gap-3 shrink-0">
+              <div className="min-w-0">
+                <div className="text-[11px] text-slate-300 font-medium truncate">
+                  सत्र: <span className="font-mono-tabular">{selectedSession.sessionCode}</span> ·{' '}
+                  {selectedSession.villageName} · दि.{' '}
+                  <span className="font-mono-tabular">{formatDDMMYYYY(selectedSession.sessionDate)}</span>
+                </div>
+                <h3 className="text-base font-bold leading-snug">
+                  नोंदणीकृत लाभार्थी शोधा व आजच्या सत्रात निवडा
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActionMode('NONE')}
+                className="p-2 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 shrink-0"
+                aria-label="बंद करा"
+              >
+                <X className="w-5 h-5" />
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => setActionMode('NONE')}
-              className="p-1.5 text-slate-400 hover:text-slate-700 rounded"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
+
+            <div className="p-5 overflow-y-auto space-y-4 flex-1">
 
           {/* Step 1: Select Beneficiary Category First */}
           <div className="flex flex-wrap items-center gap-2">
@@ -1763,25 +2009,38 @@ export const TodaySessionPage: React.FC = () => {
 
           {/* Search & Dependent Subcenter -> Village Filters */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-            <div className="md:col-span-2 relative">
-              <label className="block text-xs font-medium text-slate-700 mb-1">
-                {searchBenType === 'PREGNANT_WOMAN'
-                  ? 'शोध (मातेचे नाव / आयडी / पती / मोबाईल / गाव / MC-EDD दिनांक)'
-                  : 'शोध (बालकाचे नाव / आयडी / पालक-आई / मोबाईल / जन्मतारीख)'}
-              </label>
-              <div className="relative">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                <input
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder={
-                    searchBenType === 'PREGNANT_WOMAN'
-                      ? 'उदा. सुनंदा, PHCB-PW-2026-0001, 15-03-2026...'
-                      : 'उदा. आरोही, PHCB-BEN-2026-0001, 12-05-2026...'
-                  }
-                  className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-lg text-sm"
-                />
-              </div>
+            <div className="md:col-span-2">
+              <FuzzyAutocomplete
+                label={
+                  searchBenType === 'PREGNANT_WOMAN'
+                    ? 'शोध (मातेचे नाव / आयडी / पती / मोबाईल / गाव / MC-EDD दिनांक)'
+                    : 'शोध (बालकाचे नाव / आयडी / पालक-आई / मोबाईल / जन्मतारीख)'
+                }
+                value={searchQuery}
+                onChange={setSearchQuery}
+                items={baseExistingBeneficiaries}
+                getSearchFields={getExistingSearchFields}
+                getOptionKey={(b) => b.id}
+                getOptionLabel={(b) => b.childName}
+                getOptionSublabel={(b) =>
+                  searchBenType === 'PREGNANT_WOMAN'
+                    ? `पती: ${b.guardianName || b.fatherName || '-'} · ${b.villageName} · ${b.mobile}`
+                    : `आई: ${b.motherName || '-'} · ${b.villageName} · ${b.mobile}`
+                }
+                getOptionMeta={(b) => b.beneficiaryCode}
+                onSelectItem={(b) => {
+                  const eps = episodesByBeneficiary.get(b.id) || [];
+                  const latestEp = eps.find((ep) => ep.pregnancyStatus === 'सक्रिय') || eps[0];
+                  setSearchQuery(b.beneficiaryCode);
+                  setInspectedBenId(b.id);
+                  setSelectedEpisodeForExisting(latestEp?.id || '');
+                }}
+                placeholder={
+                  searchBenType === 'PREGNANT_WOMAN'
+                    ? 'उदा. सुनंदा, PHCB-PW-2026-0001, 15-03-2026...'
+                    : 'उदा. आरोही, PHCB-BEN-2026-0001, 12-05-2026...'
+                }
+              />
             </div>
 
             <div>
@@ -1916,9 +2175,25 @@ export const TodaySessionPage: React.FC = () => {
                             तपशील व इतिहास
                           </button>
                           {alreadyAdded ? (
-                            <span className="inline-flex items-center gap-1 text-emerald-700 font-semibold whitespace-nowrap">
-                              <CheckCircle2 className="w-3.5 h-3.5" /> सत्रात समाविष्ट
-                            </span>
+                            <div className="inline-flex items-center gap-2">
+                              <span className="inline-flex items-center gap-1 text-emerald-700 font-semibold whitespace-nowrap">
+                                <CheckCircle2 className="w-3.5 h-3.5" /> सत्रात समाविष्ट
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setActionMode('NONE');
+                                  setDoseModalTarget({
+                                    beneficiary: b,
+                                    episode: latestEp || null,
+                                    isNewlyRegistered: false,
+                                  });
+                                }}
+                                className="px-2.5 py-1.5 rounded-lg bg-teal-700 hover:bg-teal-800 text-white font-semibold whitespace-nowrap"
+                              >
+                                डोस द्या →
+                              </button>
+                            </div>
                           ) : (
                             <button
                               type="button"
@@ -1930,7 +2205,7 @@ export const TodaySessionPage: React.FC = () => {
                               }
                               className="px-2.5 py-1.5 rounded-lg bg-teal-700 hover:bg-teal-800 text-white font-semibold whitespace-nowrap"
                             >
-                              + समाविष्ट करा
+                              + सत्रात जोडा व डोस द्या
                             </button>
                           )}
                         </td>
@@ -1991,6 +2266,14 @@ export const TodaySessionPage: React.FC = () => {
                 <div className="flex flex-wrap items-center gap-2 shrink-0">
                   <button
                     type="button"
+                    disabled={pdfDownloading}
+                    onClick={() => handleDownloadConsolidatedPdf(inspectedBeneficiarySummary.ben.id)}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-teal-700 bg-white hover:bg-teal-50 text-xs font-semibold text-teal-800 whitespace-nowrap disabled:opacity-50"
+                  >
+                    <Download className="w-3.5 h-3.5" /> संपूर्ण रेकॉर्ड PDF
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => openQuickEditProfile(inspectedBeneficiarySummary.ben)}
                     className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-xs font-medium text-slate-800 whitespace-nowrap"
                   >
@@ -2018,6 +2301,14 @@ export const TodaySessionPage: React.FC = () => {
                   )}
                 </div>
               </div>
+
+              {/* Previous Checkup Values & Growth Comparison (Weight, Height, Hb, BP, BSL) */}
+              <VitalsComparisonCard
+                records={maternalServicesByBen.get(inspectedBeneficiarySummary.ben.id) || []}
+                sessions={db.vaccinationSessions}
+                villages={db.villages}
+                title="मागील तपासणी नोंदी व वाढ तुलना (वजन · उंची · Hb · BP · BSL)"
+              />
 
               {inspectedBeneficiarySummary.isWoman ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
@@ -2090,10 +2381,11 @@ export const TodaySessionPage: React.FC = () => {
                             <tr>
                               <th className="px-2 py-1.5 font-semibold">दिनांक</th>
                               <th className="px-2 py-1.5 font-semibold">ANC तपासणी</th>
-                              <th className="px-2 py-1.5 font-semibold">BP</th>
                               <th className="px-2 py-1.5 font-semibold">वजन</th>
+                              <th className="px-2 py-1.5 font-semibold">उंची</th>
                               <th className="px-2 py-1.5 font-semibold">Hb</th>
-                              <th className="px-2 py-1.5 font-semibold">रक्त/लघवी</th>
+                              <th className="px-2 py-1.5 font-semibold">BP</th>
+                              <th className="px-2 py-1.5 font-semibold">BSL</th>
                               <th className="px-2 py-1.5 font-semibold">Td</th>
                             </tr>
                           </thead>
@@ -2105,10 +2397,11 @@ export const TodaySessionPage: React.FC = () => {
                                     {formatDDMMYYYY(v.visitDate)}
                                   </td>
                                   <td className="px-2 py-1.5">{v.ancExam}</td>
-                                  <td className="px-2 py-1.5 font-mono-tabular">{v.bp}</td>
                                   <td className="px-2 py-1.5 font-mono-tabular">{v.weight}</td>
+                                  <td className="px-2 py-1.5 font-mono-tabular">{v.height}</td>
                                   <td className="px-2 py-1.5 font-mono-tabular">{v.hb}</td>
-                                  <td className="px-2 py-1.5">{v.bloodUrine}</td>
+                                  <td className="px-2 py-1.5 font-mono-tabular">{v.bp}</td>
+                                  <td className="px-2 py-1.5 font-mono-tabular">{v.bsl}</td>
                                   <td className="px-2 py-1.5">{v.tdDoses}</td>
                                 </tr>
                               )
@@ -2177,6 +2470,33 @@ export const TodaySessionPage: React.FC = () => {
               )}
             </div>
           )}
+            </div>
+
+            <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2 shrink-0">
+              <span className="text-xs text-slate-500">
+                यादीत लाभार्थी न आढळल्यास नवीन नोंदणी स्क्रीन उघडा.
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewFormError('');
+                    setActionMode('NEW_BENEFICIARY');
+                  }}
+                  className="app-btn-soft"
+                >
+                  <UserPlus className="w-3.5 h-3.5" /> नवीन नोंदणी करा
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActionMode('NONE')}
+                  className="app-btn-secondary"
+                >
+                  बंद करा
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -2275,6 +2595,19 @@ export const TodaySessionPage: React.FC = () => {
                               ))}
                             </ul>
                           )}
+                          {(() => {
+                            const vitals = buildVitalsComparisonSummary(
+                              maternalServicesByBen.get(ben.id) || []
+                            ).filter((v) => v.latestValue);
+                            if (vitals.length === 0) return null;
+                            return (
+                              <div className="mt-1.5 pt-1 border-t border-slate-100 text-[11px] text-teal-800 font-mono-tabular">
+                                {vitals
+                                  .map((v) => `${v.shortLabel}: ${v.latestValue}${v.unit ? ` ${v.unit}` : ''}`)
+                                  .join(' · ')}
+                              </div>
+                            );
+                          })()}
                         </td>
                         <td className="px-3 py-3">
                           {evalSummary.dueDoses.length === 0 ? (
@@ -2374,6 +2707,31 @@ export const TodaySessionPage: React.FC = () => {
                           )}
                         </td>
                         <td className="px-2.5 py-3 text-center whitespace-nowrap space-x-1">
+                          {canModifySession && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setDoseModalTarget({
+                                  beneficiary: ben,
+                                  episode: null,
+                                  isNewlyRegistered: false,
+                                })
+                              }
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded bg-teal-50 border border-teal-200 text-teal-800 hover:bg-teal-100 text-[11px] font-semibold mr-1"
+                              title="आजचे डोस व वाढ तपासणी स्क्रीन उघडा"
+                            >
+                              <Syringe className="w-3 h-3" /> डोस / तपासणी
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={pdfDownloading}
+                            onClick={() => handleDownloadConsolidatedPdf(ben.id)}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-[11px] font-semibold disabled:opacity-50"
+                            title="संपूर्ण एकत्रित रेकॉर्ड PDF डाउनलोड करा"
+                          >
+                            <Download className="w-3 h-3" /> PDF
+                          </button>
                           {canModifySession && (
                             <button
                               type="button"
@@ -2587,7 +2945,15 @@ export const TodaySessionPage: React.FC = () => {
                         )}
                       </div>
 
-                      <div className="flex items-center gap-2 shrink-0">
+                      <div className="flex flex-wrap items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          disabled={pdfDownloading}
+                          onClick={() => handleDownloadConsolidatedPdf(ben.id)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-teal-700 bg-white hover:bg-teal-50 text-xs font-semibold text-teal-800 whitespace-nowrap disabled:opacity-50"
+                        >
+                          <Download className="w-3.5 h-3.5" /> संपूर्ण रेकॉर्ड PDF
+                        </button>
                         {canModifySession && (
                           <button
                             type="button"
@@ -2610,6 +2976,15 @@ export const TodaySessionPage: React.FC = () => {
                       </div>
                     </div>
 
+                    {/* Vitals Comparison Strip (Weight, Height, Hb, BP, BSL + Trend) */}
+                    <VitalsComparisonCard
+                      compact
+                      records={maternalServicesByBen.get(ben.id) || []}
+                      sessions={db.vaccinationSessions}
+                      villages={db.villages}
+                      title={`${ben.childName} — मागील तपासणी व वाढ तुलना (वजन · उंची · Hb · BP · BSL)`}
+                    />
+
                     {/* Default Always-Visible Previous ANC History + Today's Saved Services (ONLY for this mother) */}
                     <div className="grid grid-cols-1 xl:grid-cols-3 gap-3 text-xs">
                       <div className="xl:col-span-2 bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
@@ -2628,14 +3003,15 @@ export const TodaySessionPage: React.FC = () => {
                         ) : (
                           <div className="overflow-x-auto bg-white border border-slate-200 rounded">
                             <table className="w-full text-[11px] text-left">
-                              <thead className="bg-slate-100 text-slate-700 border-b border-slate-200">
+                              <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
                                 <tr>
                                   <th className="px-2 py-1.5 font-semibold whitespace-nowrap">भेट दि.</th>
                                   <th className="px-2 py-1.5 font-semibold">ANC तपासणी</th>
-                                  <th className="px-2 py-1.5 font-semibold">BP</th>
                                   <th className="px-2 py-1.5 font-semibold">वजन</th>
+                                  <th className="px-2 py-1.5 font-semibold">उंची</th>
                                   <th className="px-2 py-1.5 font-semibold">Hb</th>
-                                  <th className="px-2 py-1.5 font-semibold">रक्त/लघवी</th>
+                                  <th className="px-2 py-1.5 font-semibold">BP</th>
+                                  <th className="px-2 py-1.5 font-semibold">BSL</th>
                                   <th className="px-2 py-1.5 font-semibold">Td लस</th>
                                   <th className="px-2 py-1.5 font-semibold">IFA / कॅल्शियम</th>
                                 </tr>
@@ -2647,10 +3023,11 @@ export const TodaySessionPage: React.FC = () => {
                                       {formatDDMMYYYY(vr.visitDate)}
                                     </td>
                                     <td className="px-2 py-1.5">{vr.ancExam}</td>
-                                    <td className="px-2 py-1.5 font-mono-tabular">{vr.bp}</td>
                                     <td className="px-2 py-1.5 font-mono-tabular">{vr.weight}</td>
+                                    <td className="px-2 py-1.5 font-mono-tabular">{vr.height}</td>
                                     <td className="px-2 py-1.5 font-mono-tabular">{vr.hb}</td>
-                                    <td className="px-2 py-1.5">{vr.bloodUrine}</td>
+                                    <td className="px-2 py-1.5 font-mono-tabular">{vr.bp}</td>
+                                    <td className="px-2 py-1.5 font-mono-tabular">{vr.bsl}</td>
                                     <td className="px-2 py-1.5">{vr.tdDoses}</td>
                                     <td className="px-2 py-1.5">{vr.supplements}</td>
                                   </tr>
@@ -2946,8 +3323,8 @@ export const TodaySessionPage: React.FC = () => {
 
       {/* Modal: Quick Add New Pregnancy Episode for Returning Pregnant Woman */}
       {addEpForBen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" role="dialog" aria-modal="true">
-          <form onSubmit={handleCreateEpisodeInSession} className="w-full max-w-xl bg-white rounded-xl border border-slate-200 shadow-xl p-5 space-y-4">
+        <div className="app-modal-backdrop" role="dialog" aria-modal="true">
+          <form onSubmit={handleCreateEpisodeInSession} className="app-modal max-w-xl p-5 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
                 <h3 className="text-base font-bold text-slate-900">
@@ -3018,8 +3395,8 @@ export const TodaySessionPage: React.FC = () => {
 
       {/* Modal: Quick Edit Permanent Profile */}
       {editProfileBen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" role="dialog" aria-modal="true">
-          <form onSubmit={handleSaveQuickEditProfile} className="w-full max-w-xl bg-white rounded-xl border border-slate-200 shadow-xl p-5 space-y-4">
+        <div className="app-modal-backdrop" role="dialog" aria-modal="true">
+          <form onSubmit={handleSaveQuickEditProfile} className="app-modal max-w-xl p-5 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-base font-bold text-slate-900">
                 कायमस्वरूपी प्रोफाइल दुरुस्ती ({editProfileBen.beneficiaryCode})
@@ -3088,12 +3465,8 @@ export const TodaySessionPage: React.FC = () => {
 
       {/* Pre-Completion Summary Modal */}
       {completionModalOpen && selectedSession && childReportData && maternalReportData && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
-          role="dialog"
-          aria-modal="true"
-        >
-          <div className="w-full max-w-xl bg-white rounded-xl border border-slate-200 shadow-xl p-5 space-y-4">
+        <div className="app-modal-backdrop" role="dialog" aria-modal="true">
+          <div className="app-modal max-w-xl p-5 space-y-4">
             <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
               <div>
                 <h3 className="text-base font-bold text-slate-900">
@@ -3168,10 +3541,589 @@ export const TodaySessionPage: React.FC = () => {
         </div>
       )}
 
+      {/* POP-UP MODAL C: U-WIN Style Today's Session Dose / Service Screen */}
+      {doseModalTarget && selectedSession && canModifySession && (() => {
+        const liveBen =
+          db.beneficiaries.find((b) => b.id === doseModalTarget.beneficiary.id) ||
+          doseModalTarget.beneficiary;
+        const isWoman = (liveBen.beneficiaryType || 'CHILD') === 'PREGNANT_WOMAN';
+        const allBenVitals = maternalServicesByBen.get(liveBen.id) || [];
+
+        if (!isWoman) {
+          const benRecords = recordsByBeneficiary.get(liveBen.id) || [];
+          const evalSummary = evaluateBeneficiaryEligibility(
+            liveBen,
+            selectedSession.sessionDate,
+            validatedSchedules,
+            benRecords
+          );
+          const todayDoses = benRecords.filter((r) => r.sessionId === selectedSession.id);
+          const upcomingDoses = evalSummary.allDoseResults.filter(
+            (d) => d.status === 'NOT_YET_ELIGIBLE' || d.status === 'INTERVAL_PENDING'
+          );
+          const selectedCount = evalSummary.dueDoses.filter((d) =>
+            Boolean(doseModalTicks[d.schedule.id])
+          ).length;
+          const filledVitalsCount = VITAL_METRIC_DEFS.filter(
+            (def) => (doseModalChildVitals[def.code] || '').trim().length > 0
+          ).length;
+          const vitalsLatestMap = new Map(
+            buildVitalsComparisonSummary(allBenVitals).map((v) => [v.code, v])
+          );
+
+          return (
+            <div className="app-modal-backdrop" role="dialog" aria-modal="true" aria-label="आजच्या सत्रामध्ये द्यावयाचे डोस">
+              <div className="w-full max-w-3xl bg-white rounded-xl border border-slate-200 shadow-lg flex flex-col max-h-[92vh] overflow-hidden">
+                {/* U-WIN Header */}
+                <div className="px-5 py-3.5 bg-teal-800 text-white flex items-center justify-between gap-3 shrink-0">
+                  <div className="min-w-0">
+                    <div className="text-[11px] text-teal-100 font-medium flex items-center gap-1.5">
+                      {doseModalTarget.isNewlyRegistered && (
+                        <>
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
+                          <span>नोंदणी पूर्ण!</span>
+                          <span>·</span>
+                        </>
+                      )}
+                      <span className="truncate">
+                        सत्र: {selectedSession.sessionCode} · दि. {formatDDMMYYYY(selectedSession.sessionDate)}
+                      </span>
+                    </div>
+                    <h3 className="text-base font-bold leading-snug">
+                      आजच्या सत्रामध्ये द्यावयाचे लसीकरण डोस व वाढ तपासणी (U-WIN)
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => setDoseModalTarget(null)}
+                    className="p-2 rounded-lg text-teal-100 hover:text-white hover:bg-teal-700/70 shrink-0"
+                    aria-label="बंद करा"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                {/* U-WIN Citizen Summary Card */}
+                <div className="px-5 py-3.5 bg-teal-50/70 border-b border-slate-200 shrink-0 space-y-1">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-base font-bold text-slate-900">{liveBen.childName}</span>
+                      <span className="font-mono-tabular text-xs font-semibold text-teal-800">
+                        {liveBen.beneficiaryCode}
+                      </span>
+                    </div>
+                    <span className="text-xs font-semibold text-teal-900">
+                      वय: {evalSummary.ageOnTargetDateLabel}
+                    </span>
+                  </div>
+                  <div className="text-xs text-slate-700 flex flex-wrap gap-x-4 gap-y-1">
+                    <span>
+                      पालक: <strong>{liveBen.guardianName || liveBen.fatherName || '-'}</strong>
+                    </span>
+                    <span>
+                      आई: <strong>{liveBen.motherName || '-'}</strong>
+                    </span>
+                    <span>
+                      जन्मतारीख: <strong className="font-mono-tabular">{formatDDMMYYYY(liveBen.dob)}</strong>
+                    </span>
+                    <span>
+                      गाव: <strong>{liveBen.villageName}</strong>
+                    </span>
+                    <span>
+                      मोबाईल: <strong className="font-mono-tabular">{liveBen.mobile}</strong>
+                    </span>
+                  </div>
+                </div>
+
+                {/* Scrollable Due Doses & Growth Vitals Selection Body */}
+                <div className="p-5 overflow-y-auto space-y-4 flex-1">
+                  <VitalsComparisonCard
+                    compact
+                    records={allBenVitals}
+                    sessions={db.vaccinationSessions}
+                    villages={db.villages}
+                    title="मागील तपासणी व वाढ (वजन · उंची · Hb · BP · BSL)"
+                  />
+
+                  {todayDoses.length > 0 && (
+                    <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 space-y-1">
+                      <div className="font-bold">आजच्या सत्रात आधीच नोंदवलेले डोस:</div>
+                      <div className="flex flex-wrap gap-x-4 gap-y-1">
+                        {todayDoses.map((td) => (
+                          <span key={td.id} className="inline-flex items-center gap-1 font-medium">
+                            <Check className="w-3.5 h-3.5" /> {td.doseName}
+                            {td.batchNumber ? ` (बॅच: ${td.batchNumber})` : ''}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h4 className="text-sm font-bold text-slate-900">
+                        आजच्या सत्रासाठी पात्र / देय डोस ({formatNumberIN(evalSummary.dueDoses.length)})
+                      </h4>
+                      <p className="text-xs text-slate-500">
+                        आज प्रत्यक्ष दिलेले डोस निवडा व आवश्यक असल्यास बॅच क्रमांक प्रविष्ट करा.
+                      </p>
+                    </div>
+                    {evalSummary.dueDoses.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const allSelected = evalSummary.dueDoses.every((d) =>
+                            Boolean(doseModalTicks[d.schedule.id])
+                          );
+                          setDoseModalTicks(() => {
+                            if (allSelected) return {};
+                            const next: Record<string, boolean> = {};
+                            for (const d of evalSummary.dueDoses) {
+                              next[d.schedule.id] = true;
+                            }
+                            return next;
+                          });
+                        }}
+                        className="app-btn-soft text-xs"
+                      >
+                        {evalSummary.dueDoses.every((d) => Boolean(doseModalTicks[d.schedule.id]))
+                          ? 'निवड रद्द करा'
+                          : `सर्व ${formatNumberIN(evalSummary.dueDoses.length)} देय डोस निवडा`}
+                      </button>
+                    )}
+                  </div>
+
+                  {evalSummary.dueDoses.length === 0 ? (
+                    <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-700 space-y-2">
+                      <div className="font-semibold text-slate-900">
+                        या बालकासाठी आजच्या सत्राच्या दिनांकास ({formatDDMMYYYY(selectedSession.sessionDate)}) कोणताही देय डोस बाकी नाही.
+                      </div>
+                      {upcomingDoses.length > 0 && (
+                        <div>
+                          <div className="font-semibold text-slate-600 mb-1">पुढील आगामी डोस वेळापत्रक:</div>
+                          <ul className="space-y-1 text-slate-600">
+                            {upcomingDoses.slice(0, 5).map((d) => (
+                              <li key={d.schedule.id}>
+                                • <span className="font-medium text-slate-800">{d.schedule.doseName}</span> — देय दि.{' '}
+                                <span className="font-mono-tabular">{formatDDMMYYYY(d.dueDateISO)}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {evalSummary.dueDoses.map((d) => {
+                        const checked = Boolean(doseModalTicks[d.schedule.id]);
+                        const vm = db.vaccineMaster.find((v) => v.id === d.schedule.vaccineId);
+                        return (
+                          <div
+                            key={d.schedule.id}
+                            className={`p-3.5 rounded-xl border transition-colors space-y-2.5 ${
+                              checked
+                                ? 'bg-teal-50 border-teal-500'
+                                : 'bg-white border-slate-200 hover:border-teal-300'
+                            }`}
+                          >
+                            <label className="flex items-start gap-2.5 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() =>
+                                  setDoseModalTicks((prev) => ({
+                                    ...prev,
+                                    [d.schedule.id]: !prev[d.schedule.id],
+                                  }))
+                                }
+                                className="w-5 h-5 mt-0.5 accent-teal-700 shrink-0"
+                              />
+                              <div className="min-w-0 flex-1">
+                                <div className="flex flex-wrap items-center justify-between gap-1">
+                                  <span className="text-sm font-bold text-slate-900">
+                                    {d.schedule.doseName}
+                                  </span>
+                                  <span
+                                    className={`text-[11px] font-semibold ${
+                                      d.isOverdue ? 'text-rose-700' : 'text-amber-800'
+                                    }`}
+                                  >
+                                    {d.isOverdue ? 'मुदत उलटलेला' : 'आज देय'}
+                                  </span>
+                                </div>
+                                <div className="text-xs text-slate-600 mt-0.5">
+                                  लस: {d.schedule.vaccineName}
+                                  {d.schedule.recommendedDueRuleText
+                                    ? ` · ${d.schedule.recommendedDueRuleText}`
+                                    : ''}
+                                </div>
+                              </div>
+                            </label>
+
+                            {checked && (
+                              <div className="pl-7">
+                                <input
+                                  value={doseModalBatch[d.schedule.id] || ''}
+                                  onChange={(e) =>
+                                    setDoseModalBatch((prev) => ({
+                                      ...prev,
+                                      [d.schedule.id]: e.target.value,
+                                    }))
+                                  }
+                                  placeholder={
+                                    vm?.requiresBatchNumber
+                                      ? 'बॅच क्रमांक प्रविष्ट करा'
+                                      : 'बॅच क्रमांक (ऐच्छिक)'
+                                  }
+                                  className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs font-mono-tabular"
+                                />
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Child Checkup / Growth Measurement Inputs */}
+                  <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5">
+                    <div>
+                      <h4 className="text-xs font-bold text-slate-900">
+                        आजची वाढ व आरोग्य तपासणी नोंद (ऐच्छिक — वजन, उंची, Hb, BP, BSL)
+                      </h4>
+                      <p className="text-[11px] text-slate-500">
+                        मागील व्हॅल्यूशी तुलना करण्यासाठी आज तपासलेली मापे येथे प्रविष्ट करा.
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 text-xs">
+                      {VITAL_METRIC_DEFS.map((def) => {
+                        const prev = vitalsLatestMap.get(def.code);
+                        return (
+                          <div key={def.code} className="space-y-1">
+                            <label className="block text-[11px] font-semibold text-slate-700">
+                              {def.shortLabel} ({def.unit})
+                            </label>
+                            <input
+                              value={doseModalChildVitals[def.code] || ''}
+                              onChange={(e) =>
+                                setDoseModalChildVitals((p) => ({
+                                  ...p,
+                                  [def.code]: e.target.value,
+                                }))
+                              }
+                              placeholder={def.placeholder}
+                              className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-mono-tabular"
+                            />
+                            {prev?.latestValue && (
+                              <div className="text-[10px] text-slate-500 font-mono-tabular">
+                                मागील: {prev.latestValue} ({formatDDMMYYYY(prev.latestDate)})
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">
+                      लसीकरण / तपासणी शेरा (ऐच्छिक)
+                    </label>
+                    <input
+                      value={doseModalRemarks}
+                      onChange={(e) => setDoseModalRemarks(e.target.value)}
+                      placeholder="उदा. डाव्या मांडीवर दिली, AEFI नाही..."
+                      className="app-input text-xs"
+                    />
+                  </div>
+                </div>
+
+                {/* Sticky Footer */}
+                <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2 shrink-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => setDoseModalTarget(null)}
+                      className="app-btn-secondary"
+                    >
+                      नंतर नोंदवा / बंद करा
+                    </button>
+                    <button
+                      type="button"
+                      disabled={pdfDownloading}
+                      onClick={() => handleDownloadConsolidatedPdf(liveBen.id)}
+                      className="app-btn-soft text-xs"
+                    >
+                      <Download className="w-3.5 h-3.5" /> संपूर्ण रेकॉर्ड PDF
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={(selectedCount === 0 && filledVitalsCount === 0) || busy}
+                    onClick={() =>
+                      handleSaveDoseModalChild(
+                        liveBen,
+                        evalSummary.dueDoses.map((d) => d.schedule)
+                      )
+                    }
+                    className="app-btn-primary px-5 py-2.5"
+                  >
+                    <Save className="w-4 h-4" />
+                    {busy
+                      ? 'जतन होत आहे...'
+                      : `आजच्या नोंदी जतन करा (${formatNumberIN(selectedCount + filledVitalsCount)})`}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        }
+
+        // Pregnant Woman Today's Td / ANC Service Recording Screen
+        const eps = episodesByBeneficiary.get(liveBen.id) || [];
+        const resolvedEp =
+          (doseModalTarget.episode
+            ? eps.find((e) => e.id === doseModalTarget.episode?.id) || doseModalTarget.episode
+            : null) ||
+          eps.find((e) => e.pregnancyStatus === 'सक्रिय') ||
+          eps[0] ||
+          null;
+        const recs = (maternalServicesByBen.get(liveBen.id) || []).filter(
+          (r) => !resolvedEp || !r.pregnancyEpisodeId || r.pregnancyEpisodeId === resolvedEp.id
+        );
+        const todayServices = recs.filter((r) => r.sessionId === selectedSession.id);
+        const alreadyRecordedCodes = new Set(todayServices.map((s) => s.serviceCode));
+        const selectedMaternalCount = activeMaternalCatalog.filter((svc) =>
+          Boolean(doseModalAncChecked[svc.serviceCode])
+        ).length;
+        const prevModalServiceMap = new Map<string, (typeof allBenVitals)[number]>();
+        for (const r of allBenVitals
+          .filter((r) => r.sessionId !== selectedSession.id)
+          .sort((a, b) => b.visitDate.localeCompare(a.visitDate))) {
+          if (!prevModalServiceMap.has(r.serviceCode)) {
+            prevModalServiceMap.set(r.serviceCode, r);
+          }
+        }
+
+        return (
+          <div className="app-modal-backdrop" role="dialog" aria-modal="true" aria-label="आजच्या सत्रातील ANC व Td लसीकरण सेवा">
+            <div className="w-full max-w-4xl bg-white rounded-xl border border-slate-200 shadow-lg flex flex-col max-h-[92vh] overflow-hidden">
+              <div className="px-5 py-3.5 bg-teal-800 text-white flex items-center justify-between gap-3 shrink-0">
+                <div className="min-w-0">
+                  <div className="text-[11px] text-teal-100 font-medium flex items-center gap-1.5">
+                    {doseModalTarget.isNewlyRegistered && (
+                      <>
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
+                        <span>माता नोंदणी पूर्ण!</span>
+                        <span>·</span>
+                      </>
+                    )}
+                    <span className="truncate">
+                      सत्र: {selectedSession.sessionCode} · दि. {formatDDMMYYYY(selectedSession.sessionDate)}
+                    </span>
+                  </div>
+                  <h3 className="text-base font-bold leading-snug">
+                    आजच्या सत्रामध्ये द्यावयाच्या Td लस व ANC सेवा (U-WIN)
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setDoseModalTarget(null)}
+                  className="p-2 rounded-lg text-teal-100 hover:text-white hover:bg-teal-700/70 shrink-0"
+                  aria-label="बंद करा"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="px-5 py-3.5 bg-teal-50/70 border-b border-slate-200 shrink-0 space-y-1">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-base font-bold text-slate-900">{liveBen.childName}</span>
+                    <span className="font-mono-tabular text-xs font-semibold text-teal-800">
+                      {liveBen.beneficiaryCode}
+                    </span>
+                  </div>
+                  {resolvedEp && (
+                    <span className="text-xs font-semibold text-teal-900 font-mono-tabular">
+                      {calculateGestationalAgeLabel(resolvedEp.mcDate, selectedSession.sessionDate)}
+                    </span>
+                  )}
+                </div>
+                <div className="text-xs text-slate-700 flex flex-wrap gap-x-4 gap-y-1">
+                  <span>
+                    पती: <strong>{liveBen.guardianName || liveBen.fatherName || '-'}</strong>
+                  </span>
+                  <span>
+                    गाव: <strong>{liveBen.villageName}</strong>
+                  </span>
+                  <span>
+                    मोबाईल: <strong className="font-mono-tabular">{liveBen.mobile}</strong>
+                  </span>
+                  {resolvedEp && (
+                    <>
+                      <span>
+                        MC: <strong className="font-mono-tabular">{formatDDMMYYYY(resolvedEp.mcDate)}</strong>
+                      </span>
+                      <span>
+                        EDD: <strong className="font-mono-tabular">{formatDDMMYYYY(resolvedEp.eddDate)}</strong>
+                      </span>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              <div className="p-5 overflow-y-auto space-y-4 flex-1">
+                <VitalsComparisonCard
+                  compact
+                  records={allBenVitals}
+                  sessions={db.vaccinationSessions}
+                  villages={db.villages}
+                  title="मागील तपासणी व वाढ तुलना (वजन · उंची · Hb · BP · BSL)"
+                />
+
+                {!resolvedEp ? (
+                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900">
+                    या मातेचे सक्रिय गर्भधारणा प्रकरण (MC/EDD) अद्याप जोडलेले नाही. मुख्य पानावर '+ गर्भधारणा प्रकरण जोडा' वापरून जोडा.
+                  </div>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 text-xs">
+                      {activeMaternalCatalog.map((svc) => {
+                        const alreadyDone = alreadyRecordedCodes.has(svc.serviceCode);
+                        const checked = Boolean(doseModalAncChecked[svc.serviceCode]);
+                        const prevRec = prevModalServiceMap.get(svc.serviceCode);
+                        return (
+                          <div
+                            key={svc.serviceCode}
+                            className={`p-3 rounded-xl border space-y-2 ${
+                              alreadyDone
+                                ? 'bg-emerald-50/60 border-emerald-200'
+                                : checked
+                                  ? 'bg-teal-50 border-teal-500'
+                                  : 'bg-white border-slate-200'
+                            }`}
+                          >
+                            <label className="flex items-start gap-2 cursor-pointer font-medium text-slate-900">
+                              <input
+                                type="checkbox"
+                                disabled={alreadyDone}
+                                checked={alreadyDone || checked}
+                                onChange={() =>
+                                  setDoseModalAncChecked((prev) => ({
+                                    ...prev,
+                                    [svc.serviceCode]: !prev[svc.serviceCode],
+                                  }))
+                                }
+                                className="w-4 h-4 mt-0.5 accent-teal-700"
+                              />
+                              <span className="flex-1">
+                                <span className="block">{svc.serviceName}</span>
+                                {prevRec && (
+                                  <span className="block text-[11px] text-slate-600 font-normal mt-0.5">
+                                    मागील: <strong className="font-mono-tabular">{prevRec.serviceValue}</strong>{' '}
+                                    ({formatDDMMYYYY(prevRec.visitDate)})
+                                  </span>
+                                )}
+                                {alreadyDone && (
+                                  <span className="block text-[11px] text-emerald-700 font-semibold mt-0.5">
+                                    ✓ आज जतन झाले
+                                  </span>
+                                )}
+                              </span>
+                            </label>
+                            {checked && !alreadyDone && (
+                              <div className="space-y-1.5 pl-6">
+                                <input
+                                  value={doseModalAncValue[svc.serviceCode] || ''}
+                                  onChange={(e) =>
+                                    setDoseModalAncValue((p) => ({
+                                      ...p,
+                                      [svc.serviceCode]: e.target.value,
+                                    }))
+                                  }
+                                  placeholder={svc.unit ? `मापन (${svc.unit})` : 'नोंद / तपशील'}
+                                  className="w-full bg-white border border-slate-300 rounded px-2.5 py-1.5 text-xs"
+                                />
+                                {svc.requiresBatchNumber && (
+                                  <input
+                                    value={doseModalAncBatch[svc.serviceCode] || ''}
+                                    onChange={(e) =>
+                                      setDoseModalAncBatch((p) => ({
+                                        ...p,
+                                        [svc.serviceCode]: e.target.value,
+                                      }))
+                                    }
+                                    placeholder="बॅच क्र."
+                                    className="w-full bg-white border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono-tabular"
+                                  />
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 mb-1">
+                        सत्र शेरा (ऐच्छिक)
+                      </label>
+                      <input
+                        value={doseModalRemarks}
+                        onChange={(e) => setDoseModalRemarks(e.target.value)}
+                        placeholder={`${liveBen.childName} यांच्या सत्रासंबंधी शेरा`}
+                        className="app-input text-xs"
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2 shrink-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => setDoseModalTarget(null)}
+                    className="app-btn-secondary"
+                  >
+                    नंतर नोंदवा / बंद करा
+                  </button>
+                  <button
+                    type="button"
+                    disabled={pdfDownloading}
+                    onClick={() => handleDownloadConsolidatedPdf(liveBen.id)}
+                    className="app-btn-soft text-xs"
+                  >
+                    <Download className="w-3.5 h-3.5" /> संपूर्ण रेकॉर्ड PDF
+                  </button>
+                </div>
+                {resolvedEp && (
+                  <button
+                    type="button"
+                    disabled={selectedMaternalCount === 0 || busy}
+                    onClick={() => handleSaveDoseModalMaternal(liveBen, resolvedEp)}
+                    className="app-btn-primary px-5 py-2.5"
+                  >
+                    <Save className="w-4 h-4" />
+                    {busy
+                      ? 'जतन होत आहे...'
+                      : `आजच्या ANC / Td सेवा जतन करा (${formatNumberIN(selectedMaternalCount)})`}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Confirmation Modals */}
       <ConfirmModal
         open={confirmRegisterOpen}
-        title="नवीन लाभार्थी Google Sheet मध्ये नोंदवून सत्रात समाविष्ट करायचा का?"
+        title="नवीन लाभार्थी नोंदवून सत्रात समाविष्ट करायचा का?"
         description={`नाव: ${newChildName} · प्रकार: ${
           newBenType === 'PREGNANT_WOMAN' ? 'गरोदर माता' : 'बालक'
         } · मोबाईल: ${newMobile}`}
@@ -3193,7 +4145,7 @@ export const TodaySessionPage: React.FC = () => {
 
       <ConfirmModal
         open={confirmSaveTicksOpen}
-        title="आज दिलेले बालक लस डोस Google Sheet मध्ये जतन करायचे का?"
+        title="आज दिलेले बालक लस डोस जतन करायचे का?"
         description={`सत्र ${selectedSession?.sessionCode} अंतर्गत ${pendingTickEntries.length} बालक लस डोस नोंदवले जातील:`}
         details={pendingTickEntries.map(
           (e) =>
@@ -3209,7 +4161,7 @@ export const TodaySessionPage: React.FC = () => {
 
       <ConfirmModal
         open={confirmSaveAncOpen}
-        title={`${activeMaternalRow?.ben.childName || 'गरोदर माता'} यांच्या ANC सेवा Google Sheet मध्ये जतन करायच्या का?`}
+        title={`${activeMaternalRow?.ben.childName || 'गरोदर माता'} यांच्या ANC सेवा जतन करायच्या का?`}
         description={`सत्र ${selectedSession?.sessionCode} अंतर्गत ${activeMaternalRow?.ben.childName || ''} (${activeMaternalRow?.ben.beneficiaryCode || ''}) यांच्या ${activeMaternalPendingEntries.length} ANC / लसीकरण सेवा नोंदवल्या जातील:`}
         details={activeMaternalPendingEntries.map(
           (e) =>

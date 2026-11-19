@@ -1,84 +1,105 @@
 import React, { useMemo, useState } from 'react';
-import { Download, Search } from 'lucide-react';
+import { Download } from 'lucide-react';
 import { useSheetData } from '../context/SheetDataContext';
 import { formatTimestampIST, getTodayIST } from '../utils/dateUtils';
 import { exportToExcel } from '../utils/exportUtils';
+import { fuzzyFilterAndRank } from '../utils/fuzzySearch';
+import { FuzzyAutocomplete } from '../components/FuzzyAutocomplete';
+import { EmptyState } from '../components/EmptyState';
+import { PageHeader } from '../components/PageHeader';
 
 export const AuditLogPage: React.FC = () => {
   const { db } = useSheetData();
   const [entityFilter, setEntityFilter] = useState('');
   const [search, setSearch] = useState('');
 
-  const filtered = useMemo(() => {
+  const entityFiltered = useMemo(() => {
     if (!db) return [];
-    const q = search.trim().toLowerCase();
-    return db.auditLogs.filter((log) => {
-      if (entityFilter && log.entityType !== entityFilter) return false;
-      if (!q) return true;
-      return (
-        log.action.toLowerCase().includes(q) ||
-        log.userName.toLowerCase().includes(q) ||
-        log.recordId.toLowerCase().includes(q) ||
-        (log.reason && log.reason.toLowerCase().includes(q))
-      );
-    });
-  }, [db, entityFilter, search]);
+    return entityFilter
+      ? db.auditLogs.filter((log) => log.entityType === entityFilter)
+      : db.auditLogs;
+  }, [db, entityFilter]);
+
+  const filtered = useMemo(() => {
+    return fuzzyFilterAndRank(entityFiltered, search, (log) => [
+      log.action,
+      log.userName,
+      log.recordId,
+      log.reason,
+      log.entityType,
+      log.userRole,
+    ]);
+  }, [entityFiltered, search]);
 
   if (!db) return null;
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-bold text-slate-900">Audit Log (सुरक्षा व कृती नोंदवही)</h2>
-          <p className="text-xs text-slate-500">
-            प्रत्येक नोंदणी, टिकमार्क लसीकरण, दुरुस्ती व सत्र लॉक/अनलॉक कृतींची अपरिवर्तनीय नोंद
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() =>
-            exportToExcel(
-              `PHC_Bhada_AuditLogs_${getTodayIST()}`,
-              'AuditLogs',
-              ['वेळ (IST)', 'वापरकर्ता', 'भूमिका', 'घटक', 'कृती', 'रेकॉर्ड आयडी', 'कारण', 'नवीन मूल्य'],
-              filtered.map((l) => [
-                formatTimestampIST(l.createdAt),
-                l.userName,
-                l.userRole,
-                l.entityType,
-                l.action,
-                l.recordId,
-                l.reason || '',
-                l.newValue ? JSON.stringify(l.newValue) : '',
-              ])
-            )
-          }
-          className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium bg-white border border-slate-300 rounded-lg hover:bg-slate-50"
-        >
-          <Download className="w-4 h-4" /> Excel डाउनलोड
-        </button>
-      </div>
+    <div className="app-page">
+      <PageHeader
+        title="Audit Log (सुरक्षा व कृती नोंदवही)"
+        subtitle="प्रत्येक नोंदणी, टिकमार्क लसीकरण, दुरुस्ती व सत्र लॉक/अनलॉक कृतींची अपरिवर्तनीय नोंद"
+        actions={
+          <button
+            type="button"
+            onClick={() =>
+              exportToExcel(
+                `PHC_Bhada_AuditLogs_${getTodayIST()}`,
+                'AuditLogs',
+                ['वेळ (IST)', 'वापरकर्ता', 'भूमिका', 'घटक', 'कृती', 'रेकॉर्ड आयडी', 'कारण', 'नवीन मूल्य'],
+                filtered.map((l) => [
+                  formatTimestampIST(l.createdAt),
+                  l.userName,
+                  l.userRole,
+                  l.entityType,
+                  l.action,
+                  l.recordId,
+                  l.reason || '',
+                  l.newValue ? JSON.stringify(l.newValue) : '',
+                ])
+              )
+            }
+            className="app-btn-secondary text-xs"
+          >
+            <Download className="w-4 h-4" /> Excel डाउनलोड
+          </button>
+        }
+      />
 
-      <div className="bg-white p-4 rounded-xl border border-slate-200 grid grid-cols-1 md:grid-cols-3 gap-3">
-        <div className="relative md:col-span-2">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="कृती, वापरकर्ता, आयडी किंवा कारण शोधा..."
-            className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-lg text-sm"
-          />
-        </div>
+      <div className="app-card p-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+        <FuzzyAutocomplete
+          className="md:col-span-2"
+          value={search}
+          onChange={setSearch}
+          items={entityFiltered}
+          getSearchFields={(log) => [
+            log.action,
+            log.userName,
+            log.recordId,
+            log.reason,
+            log.entityType,
+            log.userRole,
+          ]}
+          getOptionKey={(log) => log.id}
+          getOptionLabel={(log) => log.action}
+          getOptionSublabel={(log) =>
+            `${log.userName} (${log.userRole})${log.reason ? ` · कारण: ${log.reason}` : ''}`
+          }
+          getOptionMeta={(log) => log.recordId || log.entityType}
+          onSelectItem={(log) => setSearch(log.recordId || log.action)}
+          placeholder="कृती, वापरकर्ता, आयडी किंवा कारण शोधा..."
+        />
         <select
           value={entityFilter}
           onChange={(e) => setEntityFilter(e.target.value)}
-          className="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white"
+          className="app-input"
         >
           <option value="">सर्व घटक</option>
           <option value="BENEFICIARY">BENEFICIARY</option>
+          <option value="PREGNANCY_EPISODE">PREGNANCY_EPISODE</option>
           <option value="SESSION">SESSION</option>
           <option value="VACCINATION">VACCINATION</option>
+          <option value="MATERNAL_SERVICE">MATERNAL_SERVICE</option>
+          <option value="RI_CHECKLIST">RI_CHECKLIST</option>
           <option value="SUBCENTRE">SUBCENTRE</option>
           <option value="VILLAGE">VILLAGE</option>
           <option value="STAFF">STAFF</option>
@@ -90,38 +111,38 @@ export const AuditLogPage: React.FC = () => {
         </select>
       </div>
 
-      <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto">
+      <div className="app-table-wrap">
         {filtered.length === 0 ? (
-          <div className="p-8 text-center text-sm text-slate-500">कोणत्याही Audit नोंदी आढळल्या नाहीत.</div>
+          <EmptyState message="कोणत्याही Audit नोंदी आढळल्या नाहीत." />
         ) : (
-          <table className="w-full text-sm text-left">
-            <thead className="bg-slate-50 text-slate-600 text-xs border-b border-slate-200">
+          <table className="app-table">
+            <thead className="app-thead">
               <tr>
-                <th className="px-4 py-3 font-semibold">वेळ (IST)</th>
-                <th className="px-4 py-3 font-semibold">वापरकर्ता</th>
-                <th className="px-4 py-3 font-semibold">घटक</th>
-                <th className="px-4 py-3 font-semibold">कृती</th>
-                <th className="px-4 py-3 font-semibold">तपशील व कारण</th>
+                <th className="app-th">वेळ (IST)</th>
+                <th className="app-th">वापरकर्ता</th>
+                <th className="app-th">घटक</th>
+                <th className="app-th">कृती</th>
+                <th className="app-th">तपशील व कारण</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filtered.map((log) => (
-                <tr key={log.id} className="hover:bg-slate-50">
-                  <td className="px-4 py-2.5 text-xs font-mono-tabular whitespace-nowrap text-slate-600">
+                <tr key={log.id} className="hover:bg-slate-50/80 transition-colors">
+                  <td className="app-td text-xs font-mono-tabular whitespace-nowrap text-slate-600">
                     {formatTimestampIST(log.createdAt)}
                   </td>
-                  <td className="px-4 py-2.5 text-xs">
+                  <td className="app-td text-xs">
                     <div className="font-semibold text-slate-900">{log.userName}</div>
                     <div className="text-slate-500">{log.userRole}</div>
                   </td>
-                  <td className="px-4 py-2.5 text-xs font-mono-tabular text-teal-800 font-semibold">
+                  <td className="app-td text-xs font-mono-tabular text-teal-800 font-semibold">
                     {log.entityType}
                   </td>
-                  <td className="px-4 py-2.5 text-xs font-medium text-slate-900">
+                  <td className="app-td text-xs font-medium text-slate-900">
                     <div>{log.action}</div>
                     <div className="font-mono-tabular text-[11px] text-slate-500">{log.recordId}</div>
                   </td>
-                  <td className="px-4 py-2.5 text-xs text-slate-600 max-w-md">
+                  <td className="app-td text-xs text-slate-600 max-w-md">
                     {log.reason && <div className="font-semibold text-amber-800">कारण: {log.reason}</div>}
                     {log.newValue && (
                       <div className="font-mono-tabular text-[11px] truncate">

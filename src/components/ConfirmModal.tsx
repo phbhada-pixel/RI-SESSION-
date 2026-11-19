@@ -29,12 +29,8 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
   if (!open) return null;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
-      role="dialog"
-      aria-modal="true"
-    >
-      <div className="w-full max-w-md bg-white rounded-xl border border-slate-200 shadow-xl p-5 space-y-4">
+    <div className="app-modal-backdrop z-[60]" role="dialog" aria-modal="true">
+      <div className="app-modal max-w-md">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-2.5">
             <div
@@ -51,6 +47,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
             onClick={onCancel}
             disabled={loading}
             className="p-1 text-slate-400 hover:text-slate-700 rounded"
+            aria-label="बंद करा"
           >
             <X className="w-4 h-4" />
           </button>
@@ -68,12 +65,12 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
           </ul>
         )}
 
-        <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+        <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
           <button
             type="button"
             onClick={onCancel}
             disabled={loading}
-            className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 whitespace-nowrap"
+            className="app-btn-secondary px-4 py-2 text-sm"
           >
             {cancelLabel}
           </button>
@@ -81,11 +78,9 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
             type="button"
             onClick={onConfirm}
             disabled={loading}
-            className={`px-4 py-2 text-sm font-semibold text-white rounded-lg whitespace-nowrap disabled:opacity-60 ${
-              variant === 'danger'
-                ? 'bg-rose-700 hover:bg-rose-800'
-                : 'bg-teal-700 hover:bg-teal-800'
-            }`}
+            className={
+              variant === 'danger' ? 'app-btn-danger text-sm' : 'app-btn-primary text-sm'
+            }
           >
             {loading ? 'प्रक्रिया सुरू...' : confirmLabel}
           </button>

@@ -5,6 +5,8 @@ import { useSheetData } from '../context/SheetDataContext';
 import { formatDDMMYYYY, getTodayIST } from '../utils/dateUtils';
 import { evaluateBeneficiaryEligibility } from '../utils/eligibilityEngine';
 import { exportToExcel, exportToPDF } from '../utils/exportUtils';
+import { EmptyState } from '../components/EmptyState';
+import { PageHeader } from '../components/PageHeader';
 
 export const DueVaccinationPage: React.FC = () => {
   const { db, currentUser } = useSheetData();
@@ -96,51 +98,38 @@ export const DueVaccinationPage: React.FC = () => {
   };
 
   return (
-    <div className="space-y-5">
-      <div className="no-print flex flex-col md:flex-row md:items-center justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-bold text-slate-900">देय लसीकरण यादी</h2>
-          <p className="text-xs text-slate-500">
-            निवडलेल्या तारखेनुसार प्रलंबित व देय डोस असलेले {dueRows.length} लाभार्थी
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={handleExcel}
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium bg-white border border-slate-300 rounded-lg hover:bg-slate-50"
-          >
-            <Download className="w-4 h-4" /> Excel
-          </button>
-          <button
-            type="button"
-            onClick={handlePDF}
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium bg-white border border-slate-300 rounded-lg hover:bg-slate-50"
-          >
-            <Download className="w-4 h-4" /> PDF
-          </button>
-          <button
-            type="button"
-            onClick={() => window.print()}
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-white bg-teal-700 rounded-lg hover:bg-teal-800"
-          >
-            <Printer className="w-4 h-4" /> प्रिंट
-          </button>
-        </div>
-      </div>
+    <div className="app-page">
+      <PageHeader
+        noPrint
+        title="देय लसीकरण यादी"
+        subtitle={`निवडलेल्या तारखेनुसार प्रलंबित व देय डोस असलेले ${dueRows.length} लाभार्थी`}
+        actions={
+          <>
+            <button type="button" onClick={handleExcel} className="app-btn-secondary">
+              <Download className="w-4 h-4" /> Excel
+            </button>
+            <button type="button" onClick={handlePDF} className="app-btn-secondary">
+              <Download className="w-4 h-4" /> PDF
+            </button>
+            <button type="button" onClick={() => window.print()} className="app-btn-primary">
+              <Printer className="w-4 h-4" /> प्रिंट
+            </button>
+          </>
+        }
+      />
 
-      <div className="no-print bg-white p-4 rounded-xl border border-slate-200 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="no-print app-card app-card-body grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <div>
-          <label className="text-xs font-medium text-slate-600 block mb-1">लक्ष्य दिनांक</label>
+          <label className="app-label">लक्ष्य दिनांक</label>
           <input
             type="date"
             value={targetDate}
             onChange={(e) => setTargetDate(e.target.value)}
-            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono-tabular"
+            className="app-input font-mono-tabular"
           />
         </div>
         <div>
-          <label className="text-xs font-medium text-slate-600 block mb-1">उपकेंद्र</label>
+          <label className="app-label">उपकेंद्र</label>
           <select
             disabled={Boolean(scopedSubcentre)}
             value={effectiveSubcentre}
@@ -148,7 +137,7 @@ export const DueVaccinationPage: React.FC = () => {
               setSubcentreFilter(e.target.value);
               setVillageFilter('');
             }}
-            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white disabled:bg-slate-100"
+            className="app-input"
           >
             <option value="">सर्व उपकेंद्रे</option>
             {db.subcentres.map((s) => (
@@ -159,11 +148,11 @@ export const DueVaccinationPage: React.FC = () => {
           </select>
         </div>
         <div>
-          <label className="text-xs font-medium text-slate-600 block mb-1">गाव</label>
+          <label className="app-label">गाव</label>
           <select
             value={villageFilter}
             onChange={(e) => setVillageFilter(e.target.value)}
-            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white"
+            className="app-input"
           >
             <option value="">सर्व गावे</option>
             {filteredVillages.map((v) => (
@@ -174,11 +163,11 @@ export const DueVaccinationPage: React.FC = () => {
           </select>
         </div>
         <div>
-          <label className="text-xs font-medium text-slate-600 block mb-1">लस</label>
+          <label className="app-label">लस</label>
           <select
             value={vaccineFilter}
             onChange={(e) => setVaccineFilter(e.target.value)}
-            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white"
+            className="app-input"
           >
             <option value="">सर्व लसी</option>
             {db.vaccineMaster.map((v) => (
@@ -190,22 +179,20 @@ export const DueVaccinationPage: React.FC = () => {
         </div>
       </div>
 
-      <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto">
+      <div className="app-table-wrap">
         {dueRows.length === 0 ? (
-          <div className="p-8 text-center text-sm text-slate-500">
-            निवडलेल्या तारखेसाठी कोणतेही देय लसीकरण प्रलंबित नाही.
-          </div>
+          <EmptyState message="निवडलेल्या तारखेसाठी कोणतेही देय लसीकरण प्रलंबित नाही." />
         ) : (
-          <table className="w-full text-sm text-left">
-            <thead className="bg-slate-50 text-slate-600 text-xs border-b border-slate-200">
+          <table className="app-table">
+            <thead className="app-thead">
               <tr>
-                <th className="px-4 py-3 font-semibold">लाभार्थी आयडी</th>
-                <th className="px-4 py-3 font-semibold">बाळाचे नाव व आई</th>
-                <th className="px-4 py-3 font-semibold">मोबाईल</th>
-                <th className="px-4 py-3 font-semibold">गाव / उपकेंद्र</th>
-                <th className="px-4 py-3 font-semibold">वय ({formatDDMMYYYY(targetDate)})</th>
-                <th className="px-4 py-3 font-semibold">देय डोस</th>
-                <th className="no-print px-4 py-3 font-semibold text-right">कार्ड</th>
+                <th className="app-th">लाभार्थी आयडी</th>
+                <th className="app-th">बाळाचे नाव व आई</th>
+                <th className="app-th">मोबाईल</th>
+                <th className="app-th">गाव / उपकेंद्र</th>
+                <th className="app-th">वय ({formatDDMMYYYY(targetDate)})</th>
+                <th className="app-th">देय डोस</th>
+                <th className="no-print app-th text-right">कार्ड</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">

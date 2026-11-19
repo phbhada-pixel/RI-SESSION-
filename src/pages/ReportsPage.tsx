@@ -4,6 +4,8 @@ import { useSheetData } from '../context/SheetDataContext';
 import { formatDDMMYYYY, getTodayIST } from '../utils/dateUtils';
 import { evaluateBeneficiaryEligibility } from '../utils/eligibilityEngine';
 import { exportToExcel, exportToPDF } from '../utils/exportUtils';
+import { EmptyState } from '../components/EmptyState';
+import { PageHeader } from '../components/PageHeader';
 
 type ReportTab =
   | 'DATE'
@@ -257,51 +259,52 @@ export const ReportsPage: React.FC = () => {
   ];
 
   return (
-    <div className="space-y-5">
-      <div className="no-print flex flex-col md:flex-row md:items-center justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-bold text-slate-900">अहवाल (Reports)</h2>
-          <p className="text-xs text-slate-500">Excel, PDF आणि प्रिंट स्वरूपात सर्वसमावेशक अहवाल</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() =>
-              exportToExcel(
-                `PHC_Bhada_Report_${tab}_${today}`,
-                tab,
-                reportData.headers,
-                reportData.rows
-              )
-            }
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium bg-white border border-slate-300 rounded-lg hover:bg-slate-50"
-          >
-            <Download className="w-4 h-4" /> Excel
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              exportToPDF(
-                `PHC_Bhada_Report_${tab}_${today}`,
-                `PHC Bhada Report - ${tab}`,
-                `Generated on ${formatDDMMYYYY(today)}`,
-                reportData.headers,
-                reportData.rows
-              )
-            }
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium bg-white border border-slate-300 rounded-lg hover:bg-slate-50"
-          >
-            <Download className="w-4 h-4" /> PDF
-          </button>
-          <button
-            type="button"
-            onClick={() => window.print()}
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-white bg-teal-700 rounded-lg hover:bg-teal-800"
-          >
-            <Printer className="w-4 h-4" /> प्रिंट
-          </button>
-        </div>
-      </div>
+    <div className="app-page">
+      <PageHeader
+        noPrint
+        title="अहवाल (Reports)"
+        subtitle="Excel, PDF आणि प्रिंट स्वरूपात सर्वसमावेशक अहवाल"
+        actions={
+          <>
+            <button
+              type="button"
+              onClick={() =>
+                exportToExcel(
+                  `PHC_Bhada_Report_${tab}_${today}`,
+                  tab,
+                  reportData.headers,
+                  reportData.rows
+                )
+              }
+              className="app-btn-secondary"
+            >
+              <Download className="w-4 h-4" /> Excel
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                exportToPDF(
+                  `PHC_Bhada_Report_${tab}_${today}`,
+                  `PHC Bhada Report - ${tab}`,
+                  `Generated on ${formatDDMMYYYY(today)}`,
+                  reportData.headers,
+                  reportData.rows
+                )
+              }
+              className="app-btn-secondary"
+            >
+              <Download className="w-4 h-4" /> PDF
+            </button>
+            <button
+              type="button"
+              onClick={() => window.print()}
+              className="app-btn-primary"
+            >
+              <Printer className="w-4 h-4" /> प्रिंट
+            </button>
+          </>
+        }
+      />
 
       {/* Report Tabs */}
       <div className="no-print flex flex-wrap gap-1.5 p-1 bg-slate-200/70 rounded-xl w-fit">
@@ -310,7 +313,7 @@ export const ReportsPage: React.FC = () => {
             key={t.id}
             type="button"
             onClick={() => setTab(t.id)}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap ${
+            className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 ${
               tab === t.id
                 ? 'bg-white text-teal-900 shadow-sm'
                 : 'text-slate-600 hover:text-slate-900'
@@ -322,27 +325,27 @@ export const ReportsPage: React.FC = () => {
       </div>
 
       {/* Filters */}
-      <div className="no-print bg-white p-4 rounded-xl border border-slate-200 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="no-print app-card app-card-body grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <div>
-          <label className="text-xs font-medium text-slate-600 block mb-1">पासून दिनांक</label>
+          <label className="app-label">पासून दिनांक</label>
           <input
             type="date"
             value={fromDate}
             onChange={(e) => setFromDate(e.target.value)}
-            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono-tabular"
+            className="app-input font-mono-tabular"
           />
         </div>
         <div>
-          <label className="text-xs font-medium text-slate-600 block mb-1">पर्यंत दिनांक</label>
+          <label className="app-label">पर्यंत दिनांक</label>
           <input
             type="date"
             value={toDate}
             onChange={(e) => setToDate(e.target.value)}
-            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono-tabular"
+            className="app-input font-mono-tabular"
           />
         </div>
         <div>
-          <label className="text-xs font-medium text-slate-600 block mb-1">उपकेंद्र</label>
+          <label className="app-label">उपकेंद्र</label>
           <select
             disabled={Boolean(scopedSubcentre)}
             value={effectiveSubcentre}
@@ -350,7 +353,7 @@ export const ReportsPage: React.FC = () => {
               setSubcentreFilter(e.target.value);
               setVillageFilter('');
             }}
-            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white disabled:bg-slate-100"
+            className="app-input"
           >
             <option value="">सर्व उपकेंद्रे</option>
             {db.subcentres.map((s) => (
@@ -361,11 +364,11 @@ export const ReportsPage: React.FC = () => {
           </select>
         </div>
         <div>
-          <label className="text-xs font-medium text-slate-600 block mb-1">गाव</label>
+          <label className="app-label">गाव</label>
           <select
             value={villageFilter}
             onChange={(e) => setVillageFilter(e.target.value)}
-            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white"
+            className="app-input"
           >
             <option value="">सर्व गावे</option>
             {db.villages
@@ -380,15 +383,15 @@ export const ReportsPage: React.FC = () => {
       </div>
 
       {/* Report Table */}
-      <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto">
+      <div className="app-table-wrap">
         {reportData.rows.length === 0 ? (
-          <div className="p-8 text-center text-sm text-slate-500">निवडलेल्या निकषांसाठी माहिती उपलब्ध नाही.</div>
+          <EmptyState message="निवडलेल्या निकषांसाठी माहिती उपलब्ध नाही." />
         ) : (
-          <table className="w-full text-sm text-left">
-            <thead className="bg-slate-50 text-slate-700 text-xs border-b border-slate-200">
+          <table className="app-table">
+            <thead className="app-thead">
               <tr>
                 {reportData.headers.map((h) => (
-                  <th key={h} className="px-4 py-3 font-semibold">
+                  <th key={h} className="app-th">
                     {h}
                   </th>
                 ))}
@@ -398,7 +401,7 @@ export const ReportsPage: React.FC = () => {
               {reportData.rows.map((row, idx) => (
                 <tr key={idx} className="hover:bg-slate-50">
                   {row.map((cell, cIdx) => (
-                    <td key={cIdx} className="px-4 py-2.5 text-xs font-mono-tabular">
+                    <td key={cIdx} className="app-td text-xs font-mono-tabular">
                       {cell}
                     </td>
                   ))}

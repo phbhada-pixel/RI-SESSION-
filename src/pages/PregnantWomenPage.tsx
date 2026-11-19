@@ -2,16 +2,18 @@ import React, { useMemo, useState } from 'react';
 import {
   Baby,
   Calendar,
+  Download,
   Edit,
   Eye,
   EyeOff,
   HeartPulse,
   History,
   PlusCircle,
-  Search,
+  ShieldAlert,
   UserPlus,
   X,
 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { useSheetData } from '../context/SheetDataContext';
 import {
   Beneficiary,
@@ -30,7 +32,13 @@ import {
   groupMaternalVisitsByDate,
 } from '../utils/maternalUtils';
 import { canViewFullAadhaar, maskAadhaar } from '../utils/privacyUtils';
+import { fuzzyFilterAndRank } from '../utils/fuzzySearch';
+import { downloadBeneficiaryConsolidatedPDF } from '../utils/sessionPdfReport';
+import { VitalsComparisonCard } from '../components/VitalsComparisonCard';
+import { FuzzyAutocomplete } from '../components/FuzzyAutocomplete';
 import { SearchableSelect } from '../components/SearchableSelect';
+import { EmptyState } from '../components/EmptyState';
+import { PageHeader } from '../components/PageHeader';
 import { Toast } from '../components/Toast';
 
 export const PregnantWomenPage: React.FC = () => {
@@ -108,6 +116,7 @@ export const PregnantWomenPage: React.FC = () => {
   const [ueNotes, setUeNotes] = useState('');
 
   const [busy, setBusy] = useState(false);
+  const [pdfBusyId, setPdfBusyId] = useState('');
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' }>({
     msg: '',
     type: 'success',
@@ -148,39 +157,43 @@ export const PregnantWomenPage: React.FC = () => {
     return map;
   }, [db]);
 
-  const filteredWomen = useMemo(() => {
+  const baseWomen = useMemo(() => {
     if (!db) return [];
-    const q = search.trim().toLowerCase();
     return db.beneficiaries
       .filter((b) => (b.beneficiaryType || 'CHILD') === 'PREGNANT_WOMAN')
       .filter((b) => !effectiveSubcentre || b.subcentreId === effectiveSubcentre)
       .filter((b) => !villageFilter || b.villageId === villageFilter)
       .filter((b) => {
+        if (!statusFilter) return true;
         const eps = episodesByBen.get(b.id) || [];
-        if (statusFilter) {
-          const activeOrLatest = eps[0];
-          if (!activeOrLatest || activeOrLatest.pregnancyStatus !== statusFilter) return false;
-        }
-        if (!q) return true;
-        const epsMatch = eps.some(
-          (ep) =>
-            ep.episodeCode.toLowerCase().includes(q) ||
-            ep.mcDate.includes(q) ||
-            formatDDMMYYYY(ep.mcDate).includes(q) ||
-            ep.eddDate.includes(q) ||
-            formatDDMMYYYY(ep.eddDate).includes(q) ||
-            ep.hospitalName.toLowerCase().includes(q)
-        );
-        return (
-          b.childName.toLowerCase().includes(q) ||
-          (b.guardianName || b.fatherName || '').toLowerCase().includes(q) ||
-          b.beneficiaryCode.toLowerCase().includes(q) ||
-          b.mobile.includes(q) ||
-          b.villageName.toLowerCase().includes(q) ||
-          epsMatch
-        );
+        const activeOrLatest = eps[0];
+        return Boolean(activeOrLatest && activeOrLatest.pregnancyStatus === statusFilter);
       });
-  }, [db, effectiveSubcentre, villageFilter, statusFilter, search, episodesByBen]);
+  }, [db, effectiveSubcentre, villageFilter, statusFilter, episodesByBen]);
+
+  const getWomanSearchFields = (b: Beneficiary) => {
+    const eps = episodesByBen.get(b.id) || [];
+    const epFields = eps.flatMap((ep) => [
+      ep.episodeCode,
+      ep.mcDate,
+      formatDDMMYYYY(ep.mcDate),
+      ep.eddDate,
+      formatDDMMYYYY(ep.eddDate),
+      ep.hospitalName,
+    ]);
+    return [
+      b.childName,
+      b.beneficiaryCode,
+      b.guardianName || b.fatherName,
+      b.mobile,
+      b.villageName,
+      ...epFields,
+    ];
+  };
+
+  const filteredWomen = useMemo(() => {
+    return fuzzyFilterAndRank(baseWomen, search, getWomanSearchFields);
+  }, [baseWomen, search, episodesByBen]);
 
   if (!db) return null;
 
@@ -188,7 +201,11 @@ export const PregnantWomenPage: React.FC = () => {
     (v) => v.isActive && (!effectiveSubcentre || v.subcentreId === effectiveSubcentre)
   );
   const newFormVillages = db.villages.filter(
-    (v) => v.isActive && v.subcentreId === nSubcentreId
+    (v) =>
+      v.isActive &&
+      (scopedSubcentre
+        ? v.subcentreId === scopedSubcentre
+        : !nSubcentreId || v.subcentreId === nSubcentreId)
   );
   const editFormVillages = db.villages.filter(
     (v) => v.isActive && v.subcentreId === eSubcentreId
@@ -333,7 +350,7 @@ export const PregnantWomenPage: React.FC = () => {
         address: eAddress.trim(),
         status: eStatus,
       });
-      setToast({ msg: 'कायमस्वरूपी प्रोफाइल Google Sheet मध्ये अद्यतनित झाले.', type: 'success' });
+      setToast({ msg: 'कायमस्वरूपी प्रोफाइल अद्यतनित झाले.', type: 'success' });
       setEditWoman(null);
     } catch (err) {
       setToast({ msg: err instanceof Error ? err.message : 'त्रुटी आली.', type: 'error' });
@@ -394,38 +411,59 @@ export const PregnantWomenPage: React.FC = () => {
     }
   };
 
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-bold text-slate-900">गरोदर माता व्यवस्थापन (Pregnant Women)</h2>
-          <p className="text-xs text-slate-500">
-            कायमस्वरूपी माता प्रोफाइल (एकदाच जतन), एकाधिक गर्भधारणा प्रकरणे (Episodes) व ANC इतिहास
-          </p>
-        </div>
+  const handleDownloadWomanPdf = async (womanId: string) => {
+    setPdfBusyId(womanId);
+    try {
+      const preparedBy = currentUser ? `${currentUser.name} (${currentUser.role})` : 'PHC Bhada';
+      await downloadBeneficiaryConsolidatedPDF(db, womanId, preparedBy);
+      setToast({ msg: 'गरोदर मातेचे संपूर्ण रेकॉर्ड PDF डाउनलोड झाले.', type: 'success' });
+    } catch (err) {
+      setToast({
+        msg: err instanceof Error ? err.message : 'PDF तयार करताना त्रुटी आली.',
+        type: 'error',
+      });
+    } finally {
+      setPdfBusyId('');
+    }
+  };
 
-        {canModify && (
-          <button
-            type="button"
-            onClick={() => setNewModalOpen(true)}
-            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg whitespace-nowrap"
-          >
-            <UserPlus className="w-4 h-4" /> नवीन गरोदर माता नोंदणी
-          </button>
-        )}
-      </div>
+  return (
+    <div className="app-page">
+      <PageHeader
+        title="गरोदर माता व्यवस्थापन (Pregnant Women)"
+        subtitle="कायमस्वरूपी माता प्रोफाइल (एकदाच जतन), एकाधिक गर्भधारणा प्रकरणे (Episodes) व ANC इतिहास"
+        actions={
+          canModify ? (
+            <button
+              type="button"
+              onClick={() => setNewModalOpen(true)}
+              className="app-btn-primary text-xs"
+            >
+              <UserPlus className="w-4 h-4" /> नवीन गरोदर माता नोंदणी
+            </button>
+          ) : undefined
+        }
+      />
 
       {/* Filters */}
-      <div className="bg-white p-4 rounded-xl border border-slate-200 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        <div className="relative">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="नाव, माता आयडी, पती, मोबाईल, MC/EDD..."
-            className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-lg text-sm"
-          />
-        </div>
+      <div className="app-card p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <FuzzyAutocomplete
+          value={search}
+          onChange={setSearch}
+          items={baseWomen}
+          getSearchFields={getWomanSearchFields}
+          getOptionKey={(w) => w.id}
+          getOptionLabel={(w) => w.childName}
+          getOptionSublabel={(w) =>
+            `पती: ${w.guardianName || w.fatherName || '-'} · ${w.villageName} · ${w.mobile}`
+          }
+          getOptionMeta={(w) => w.beneficiaryCode}
+          onSelectItem={(w) => {
+            setSearch(w.beneficiaryCode);
+            setExpandedWomanId(w.id);
+          }}
+          placeholder="नाव, माता आयडी, पती, मोबाईल, MC/EDD..."
+        />
         <select
           disabled={Boolean(scopedSubcentre)}
           value={effectiveSubcentre}
@@ -433,7 +471,7 @@ export const PregnantWomenPage: React.FC = () => {
             setSubcentreFilter(e.target.value);
             setVillageFilter('');
           }}
-          className="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white disabled:bg-slate-100"
+          className="app-input"
         >
           <option value="">सर्व उपकेंद्रे</option>
           {db.subcentres.map((s) => (
@@ -445,7 +483,7 @@ export const PregnantWomenPage: React.FC = () => {
         <select
           value={villageFilter}
           onChange={(e) => setVillageFilter(e.target.value)}
-          className="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white"
+          className="app-input"
         >
           <option value="">सर्व गावे</option>
           {filterVillages.map((v) => (
@@ -457,7 +495,7 @@ export const PregnantWomenPage: React.FC = () => {
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
-          className="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white"
+          className="app-input"
         >
           <option value="">सर्व गर्भधारणा स्थिती</option>
           <option value="सक्रिय">सक्रिय</option>
@@ -469,8 +507,8 @@ export const PregnantWomenPage: React.FC = () => {
 
       {/* Women List */}
       {filteredWomen.length === 0 ? (
-        <div className="bg-white p-8 rounded-xl border border-slate-200 text-center text-sm text-slate-500">
-          नोंदणीकृत गरोदर माता आढळल्या नाहीत. नवीन माता नोंदणी करा किंवा शोध बदला.
+        <div className="app-card">
+          <EmptyState message="नोंदणीकृत गरोदर माता आढळल्या नाहीत. नवीन माता नोंदणी करा किंवा शोध बदला." />
         </div>
       ) : (
         <div className="space-y-4">
@@ -483,11 +521,19 @@ export const PregnantWomenPage: React.FC = () => {
             const lastVisit = visitRows[0] || null;
             const showFullAadhaar = Boolean(revealedAadhaarIds[woman.id]) && aadhaarAuthorized;
             const isExpanded = expandedWomanId === woman.id;
+            const latestHrpRec = activeEp
+              ? db.highRiskRecords.find((h) => h.pregnancyEpisodeId === activeEp.id)
+              : undefined;
+            const isWomanHighRisk = latestHrpRec
+              ? latestHrpRec.isHighRisk === 'YES'
+              : Boolean(activeEp?.isHighRisk);
 
             return (
               <div
                 key={woman.id}
-                className="bg-white rounded-xl border border-slate-200 overflow-hidden"
+                className={`bg-white rounded-xl border overflow-hidden ${
+                  isWomanHighRisk ? 'border-rose-400' : 'border-slate-200'
+                }`}
               >
                 <div className="p-4 md:p-5 flex flex-col lg:flex-row lg:items-start justify-between gap-4">
                   <div className="space-y-2 min-w-0">
@@ -502,6 +548,11 @@ export const PregnantWomenPage: React.FC = () => {
                       <span className="text-xs font-medium text-slate-600">
                         नोंदणी: {formatDDMMYYYY(woman.registrationDate)}
                       </span>
+                      {isWomanHighRisk && (
+                        <span className="inline-flex items-center gap-1 text-xs font-bold text-rose-700">
+                          <ShieldAlert className="w-3.5 h-3.5" /> HIGH RISK
+                        </span>
+                      )}
                     </div>
 
                     <div className="text-xs text-slate-700 flex flex-wrap gap-x-4 gap-y-1">
@@ -593,13 +644,19 @@ export const PregnantWomenPage: React.FC = () => {
                             ANC तपासणी: <strong>{lastVisit.ancExam}</strong>
                           </span>
                           <span>
-                            BP: <strong className="font-mono-tabular">{lastVisit.bp}</strong>
-                          </span>
-                          <span>
                             वजन: <strong className="font-mono-tabular">{lastVisit.weight}</strong>
                           </span>
                           <span>
+                            उंची: <strong className="font-mono-tabular">{lastVisit.height}</strong>
+                          </span>
+                          <span>
                             Hb: <strong className="font-mono-tabular">{lastVisit.hb}</strong>
+                          </span>
+                          <span>
+                            BP: <strong className="font-mono-tabular">{lastVisit.bp}</strong>
+                          </span>
+                          <span>
+                            BSL: <strong className="font-mono-tabular">{lastVisit.bsl}</strong>
                           </span>
                           <span>
                             रक्त/लघवी: <strong>{lastVisit.bloodUrine}</strong>
@@ -619,10 +676,25 @@ export const PregnantWomenPage: React.FC = () => {
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <Link
+                      to={`/pregnant-women/${woman.id}`}
+                      className="app-btn-primary px-3 py-1.5 text-xs"
+                    >
+                      <HeartPulse className="w-3.5 h-3.5" /> ३६०° प्रोफाइल / ANC / प्रसूती
+                    </Link>
+                    <button
+                      type="button"
+                      disabled={pdfBusyId === woman.id}
+                      onClick={() => handleDownloadWomanPdf(woman.id)}
+                      className="app-btn-soft px-3 py-1.5 text-xs disabled:opacity-50"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      {pdfBusyId === woman.id ? 'PDF...' : 'संपूर्ण रेकॉर्ड PDF'}
+                    </button>
                     <button
                       type="button"
                       onClick={() => setExpandedWomanId(isExpanded ? '' : woman.id)}
-                      className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 whitespace-nowrap"
+                      className="app-btn-secondary px-3 py-1.5 text-xs"
                     >
                       <History className="w-3.5 h-3.5" />
                       {isExpanded
@@ -634,14 +706,14 @@ export const PregnantWomenPage: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => openEditProfile(woman)}
-                          className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 whitespace-nowrap"
+                          className="app-btn-secondary px-3 py-1.5 text-xs"
                         >
                           <Edit className="w-3.5 h-3.5" /> प्रोफाइल दुरुस्ती
                         </button>
                         <button
                           type="button"
                           onClick={() => openNewEpisodeModal(woman)}
-                          className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg whitespace-nowrap"
+                          className="app-btn-primary px-3 py-1.5 text-xs"
                         >
                           <PlusCircle className="w-3.5 h-3.5" /> नवीन गर्भधारणा प्रकरण
                         </button>
@@ -653,6 +725,13 @@ export const PregnantWomenPage: React.FC = () => {
                 {/* Expanded Pregnancy Episodes & ANC Visit History */}
                 {isExpanded && (
                   <div className="border-t border-slate-200 bg-slate-50 p-4 md:p-5 space-y-4">
+                    <VitalsComparisonCard
+                      records={services}
+                      sessions={db.vaccinationSessions}
+                      villages={db.villages}
+                      title="मागील तपासणी व वाढ तुलना (वजन · उंची · Hb · BP · BSL)"
+                    />
+
                     <div className="space-y-2">
                       <h4 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                         <Calendar className="w-3.5 h-3.5 text-teal-700" /> गर्भधारणा प्रकरणे (Pregnancy Episodes)
@@ -662,7 +741,7 @@ export const PregnantWomenPage: React.FC = () => {
                       ) : (
                         <div className="overflow-x-auto bg-white border border-slate-200 rounded-lg">
                           <table className="w-full text-xs text-left">
-                            <thead className="bg-slate-100 text-slate-700 border-b border-slate-200">
+                            <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
                               <tr>
                                 <th className="px-3 py-2 font-semibold">प्रकरण आयडी</th>
                                 <th className="px-3 py-2 font-semibold">MC दिनांक</th>
@@ -721,14 +800,16 @@ export const PregnantWomenPage: React.FC = () => {
                       ) : (
                         <div className="overflow-x-auto bg-white border border-slate-200 rounded-lg">
                           <table className="w-full text-xs text-left">
-                            <thead className="bg-slate-100 text-slate-700 border-b border-slate-200">
+                            <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
                               <tr>
                                 <th className="px-3 py-2 font-semibold">भेट दिनांक</th>
                                 <th className="px-3 py-2 font-semibold">प्रकरण</th>
                                 <th className="px-3 py-2 font-semibold">ANC तपासणी</th>
-                                <th className="px-3 py-2 font-semibold">BP</th>
                                 <th className="px-3 py-2 font-semibold">वजन</th>
+                                <th className="px-3 py-2 font-semibold">उंची</th>
                                 <th className="px-3 py-2 font-semibold">Hb</th>
+                                <th className="px-3 py-2 font-semibold">BP</th>
+                                <th className="px-3 py-2 font-semibold">BSL</th>
                                 <th className="px-3 py-2 font-semibold">रक्त/लघवी</th>
                                 <th className="px-3 py-2 font-semibold">Td लस</th>
                                 <th className="px-3 py-2 font-semibold">IFA / कॅल्शियम</th>
@@ -745,9 +826,11 @@ export const PregnantWomenPage: React.FC = () => {
                                     {vr.episodeCode}
                                   </td>
                                   <td className="px-3 py-2">{vr.ancExam}</td>
-                                  <td className="px-3 py-2 font-mono-tabular">{vr.bp}</td>
                                   <td className="px-3 py-2 font-mono-tabular">{vr.weight}</td>
+                                  <td className="px-3 py-2 font-mono-tabular">{vr.height}</td>
                                   <td className="px-3 py-2 font-mono-tabular">{vr.hb}</td>
+                                  <td className="px-3 py-2 font-mono-tabular">{vr.bp}</td>
+                                  <td className="px-3 py-2 font-mono-tabular">{vr.bsl}</td>
                                   <td className="px-3 py-2">{vr.bloodUrine}</td>
                                   <td className="px-3 py-2">{vr.tdDoses}</td>
                                   <td className="px-3 py-2">{vr.supplements}</td>
@@ -769,16 +852,16 @@ export const PregnantWomenPage: React.FC = () => {
 
       {/* MODAL: NEW PREGNANT WOMAN + FIRST PREGNANCY EPISODE */}
       {newModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" role="dialog" aria-modal="true">
+        <div className="app-modal-backdrop" role="dialog" aria-modal="true">
           <form
             onSubmit={handleCreateNewWoman}
-            className="w-full max-w-4xl max-h-[92vh] overflow-y-auto bg-white rounded-xl border border-slate-200 shadow-2xl p-5 md:p-6 space-y-5"
+            className="app-modal max-w-4xl max-h-[92vh] overflow-y-auto p-5 md:p-6 space-y-5"
           >
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
                 <h3 className="text-base font-bold text-slate-900">नवीन गरोदर माता नोंदणी</h3>
                 <p className="text-xs text-slate-500">
-                  कायमस्वरूपी माता प्रोफाइल व सध्याचे गर्भधारणा प्रकरण थेट Google Sheet मध्ये जतन होईल
+                  कायमस्वरूपी माता प्रोफाइल व सध्याचे गर्भधारणा प्रकरण प्रणालीत जतन होईल
                 </p>
               </div>
               <button type="button" onClick={() => setNewModalOpen(false)} className="p-1 text-slate-400 hover:text-slate-700">
@@ -831,12 +914,21 @@ export const PregnantWomenPage: React.FC = () => {
                   options={db.subcentres.filter((s) => s.isActive).map((s) => ({ value: s.id, label: s.name }))}
                 />
                 <SearchableSelect
-                  label="गाव"
+                  label="गाव (निवडल्यास उपकेंद्र आपोआप निवडले जाईल)"
                   required
-                  disabled={!nSubcentreId}
                   value={nVillageId}
-                  onChange={setNVillageId}
-                  options={newFormVillages.map((v) => ({ value: v.id, label: v.name }))}
+                  onChange={(val) => {
+                    setNVillageId(val);
+                    const matchedVillage = db.villages.find((v) => v.id === val);
+                    if (matchedVillage && !scopedSubcentre) {
+                      setNSubcentreId(matchedVillage.subcentreId);
+                    }
+                  }}
+                  options={newFormVillages.map((v) => ({
+                    value: v.id,
+                    label: v.name,
+                    sublabel: v.subcentreName,
+                  }))}
                 />
                 <div>
                   <label className="block text-xs font-medium text-slate-700 mb-1">नोंदणी दिनांक *</label>
@@ -907,8 +999,8 @@ export const PregnantWomenPage: React.FC = () => {
 
       {/* MODAL: EDIT PERMANENT PROFILE */}
       {editWoman && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" role="dialog" aria-modal="true">
-          <form onSubmit={handleSaveEditWoman} className="w-full max-w-2xl bg-white rounded-xl border border-slate-200 shadow-xl p-5 space-y-4">
+        <div className="app-modal-backdrop" role="dialog" aria-modal="true">
+          <form onSubmit={handleSaveEditWoman} className="app-modal max-w-2xl p-5 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-base font-bold text-slate-900">
                 कायमस्वरूपी प्रोफाइल दुरुस्ती ({editWoman.beneficiaryCode})
@@ -986,8 +1078,8 @@ export const PregnantWomenPage: React.FC = () => {
 
       {/* MODAL: ADD NEW PREGNANCY EPISODE FOR EXISTING WOMAN */}
       {newEpisodeForWoman && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" role="dialog" aria-modal="true">
-          <form onSubmit={handleSaveNewEpisode} className="w-full max-w-2xl bg-white rounded-xl border border-slate-200 shadow-xl p-5 space-y-4">
+        <div className="app-modal-backdrop" role="dialog" aria-modal="true">
+          <form onSubmit={handleSaveNewEpisode} className="app-modal max-w-2xl p-5 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
                 <h3 className="text-base font-bold text-slate-900">
@@ -1063,8 +1155,8 @@ export const PregnantWomenPage: React.FC = () => {
 
       {/* MODAL: UPDATE EXISTING PREGNANCY EPISODE */}
       {editEpisode && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" role="dialog" aria-modal="true">
-          <form onSubmit={handleSaveEditEpisode} className="w-full max-w-xl bg-white rounded-xl border border-slate-200 shadow-xl p-5 space-y-4">
+        <div className="app-modal-backdrop" role="dialog" aria-modal="true">
+          <form onSubmit={handleSaveEditEpisode} className="app-modal max-w-xl p-5 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-base font-bold text-slate-900">
                 गर्भधारणा प्रकरण अद्यतनित करा ({editEpisode.episodeCode})

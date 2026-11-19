@@ -1,9 +1,15 @@
 import {
+  AncVisitRecord,
   AppUser,
   AuditLog,
+  BabyRecord,
   Beneficiary,
   BeneficiaryType,
+  DeliveryRecord,
+  HighRiskRecord,
+  MaternalReferralRecord,
   MaternalServiceRecord,
+  PncRecord,
   PregnancyEpisode,
   RiChecklist,
   RiLogisticAvailability,
@@ -34,6 +40,12 @@ export const SHEET_TABS = [
   'staff',
   'beneficiaries',
   'pregnancyEpisodes',
+  'ancVisits',
+  'highRiskRecords',
+  'maternalReferrals',
+  'deliveryRecords',
+  'babyRecords',
+  'pncRecords',
   'vaccinationSessions',
   'sessionBeneficiaries',
   'vaccineMaster',
@@ -78,6 +90,12 @@ export const TAB_COLUMNS: Record<SheetTabName, string[]> = {
     'aadhaarNumber',
     'caste',
     'category',
+    'fullNameEnglish',
+    'husbandMobile',
+    'bloodGroup',
+    'rhFactor',
+    'plannedDeliveryPlace',
+    'plannedHospitalName',
   ],
   pregnancyEpisodes: [
     'id',
@@ -94,6 +112,176 @@ export const TAB_COLUMNS: Record<SheetTabName, string[]> = {
     'gravidaPara',
     'outcomeDate',
     'notes',
+    'createdBy',
+    'createdAt',
+    'updatedAt',
+    'gravida',
+    'para',
+    'abortions',
+    'livingChildren',
+    'previousPregnancyHistory',
+    'previousCaesarean',
+    'previousComplications',
+    'bloodGroup',
+    'rhFactor',
+    'eddHistoryJson',
+    'isHighRisk',
+    'highRiskReasonsJson',
+    'currentHrpStatus',
+  ],
+  ancVisits: [
+    'id',
+    'visitNumber',
+    'visitLabel',
+    'beneficiaryId',
+    'beneficiaryCode',
+    'pregnancyEpisodeId',
+    'episodeCode',
+    'sessionId',
+    'subcentreId',
+    'subcentreName',
+    'villageId',
+    'villageName',
+    'visitDate',
+    'gestationalWeeks',
+    'gestationalDays',
+    'gestationalAgeText',
+    'weightKg',
+    'heightCm',
+    'bp',
+    'bpSystolic',
+    'bpDiastolic',
+    'hb',
+    'bloodSugar',
+    'urineAlbumin',
+    'urineSugar',
+    'bloodTests',
+    'otherTests',
+    'doctorObservation',
+    'treatmentAdvice',
+    'nextVisitDate',
+    'staffId',
+    'staffName',
+    'staffDesignation',
+    'remarks',
+    'createdBy',
+    'createdAt',
+    'updatedAt',
+  ],
+  highRiskRecords: [
+    'id',
+    'beneficiaryId',
+    'beneficiaryCode',
+    'pregnancyEpisodeId',
+    'episodeCode',
+    'isHighRisk',
+    'identificationDate',
+    'reasonsJson',
+    'otherReasonText',
+    'doctorAdvice',
+    'treatmentInfo',
+    'referralRequired',
+    'referralDate',
+    'referralHospital',
+    'referralReason',
+    'followUpDate',
+    'followUpStatus',
+    'currentStatus',
+    'statusHistoryJson',
+    'approvedByMO',
+    'createdBy',
+    'createdAt',
+    'updatedAt',
+  ],
+  maternalReferrals: [
+    'id',
+    'beneficiaryId',
+    'beneficiaryCode',
+    'pregnancyEpisodeId',
+    'episodeCode',
+    'highRiskRecordId',
+    'referralDate',
+    'referredFrom',
+    'referredToHospital',
+    'referralReason',
+    'transportArrangement',
+    'followUpDate',
+    'followUpStatus',
+    'outcomeNotes',
+    'referredByStaff',
+    'createdBy',
+    'createdAt',
+    'updatedAt',
+  ],
+  deliveryRecords: [
+    'id',
+    'beneficiaryId',
+    'beneficiaryCode',
+    'pregnancyEpisodeId',
+    'episodeCode',
+    'plannedEddDate',
+    'plannedDeliveryPlace',
+    'plannedHospitalName',
+    'deliveryPlanNotes',
+    'referralRequiredBeforeDelivery',
+    'actualDeliveryDate',
+    'actualDeliveryPlace',
+    'actualHospitalName',
+    'deliveryType',
+    'deliveryTypeOther',
+    'numberOfBabies',
+    'motherCondition',
+    'deliveryComplications',
+    'referralDetails',
+    'attendedByStaff',
+    'isCompleted',
+    'createdBy',
+    'createdAt',
+    'updatedAt',
+  ],
+  babyRecords: [
+    'id',
+    'babyCode',
+    'motherBeneficiaryId',
+    'motherBeneficiaryCode',
+    'pregnancyEpisodeId',
+    'episodeCode',
+    'deliveryRecordId',
+    'babyNumber',
+    'babyName',
+    'gender',
+    'birthWeightGrams',
+    'birthOutcome',
+    'birthOutcomeOther',
+    'babyCondition',
+    'dob',
+    'notes',
+    'createdBy',
+    'createdAt',
+    'updatedAt',
+  ],
+  pncRecords: [
+    'id',
+    'visitNumber',
+    'visitLabel',
+    'beneficiaryId',
+    'beneficiaryCode',
+    'pregnancyEpisodeId',
+    'episodeCode',
+    'deliveryRecordId',
+    'pncDate',
+    'motherBp',
+    'motherHealthStatus',
+    'bleedingStatus',
+    'breastfeedingStatus',
+    'babyWeightGrams',
+    'babyHealthStatus',
+    'breastfeedingCounselling',
+    'treatmentGiven',
+    'nextFollowUpDate',
+    'staffId',
+    'staffName',
+    'remarks',
     'createdBy',
     'createdAt',
     'updatedAt',
@@ -278,6 +466,8 @@ export const TAB_COLUMNS: Record<SheetTabName, string[]> = {
     'createdBy',
     'createdAt',
     'updatedAt',
+    'checklistStaffName',
+    'vaccineCarrierName',
   ],
   auditLogs: [
     'id',
@@ -308,7 +498,7 @@ export const TAB_COLUMNS: Record<SheetTabName, string[]> = {
 function requireToken(): string {
   const token = getInMemoryAccessToken();
   if (!token) {
-    throw new Error('Google Sheets प्रवेश टोकन उपलब्ध नाही किंवा कालबाह्य झाले आहे. कृपया पुन्हा Sign in with Google करा.');
+    throw new Error('प्रवेश सत्र उपलब्ध नाही किंवा कालबाह्य झाले आहे. कृपया पुन्हा लॉगिन करा.');
   }
   return token;
 }
@@ -325,7 +515,7 @@ async function googleFetch<T>(url: string, init: RequestInit = {}): Promise<T> {
   });
   if (!res.ok) {
     const errText = await res.text();
-    let msg = `Google API त्रुटी (${res.status})`;
+    let msg = `डेटा सर्व्हर त्रुटी (${res.status})`;
     try {
       const parsed = JSON.parse(errText);
       if (parsed?.error?.message) msg = parsed.error.message;
@@ -370,7 +560,8 @@ export async function findAppSpreadsheet(): Promise<{
 export async function fetchServerNowISO(): Promise<string> {
   try {
     const res = await fetch('/api/server-time');
-    if (res.ok) {
+    const ct = res.headers.get('content-type') || '';
+    if (res.ok && ct.includes('application/json')) {
       const data = (await res.json()) as { nowISO?: string };
       if (data.nowISO) return data.nowISO;
     }
@@ -456,7 +647,7 @@ export async function createPhcSpreadsheet(
   if (!created) {
     throw lastLocaleError instanceof Error
       ? lastLocaleError
-      : new Error('Google Sheet तयार करताना locale त्रुटी आली.');
+      : new Error('डेटाबेस तयार करताना त्रुटी आली.');
   }
 
   const ts = nowISO();
@@ -603,8 +794,20 @@ export interface CentralSheetPointerResponse {
 }
 
 export async function getCentralSheetPointer(): Promise<CentralSheetPointerResponse> {
-  const res = await fetch('/api/central-sheet');
-  if (!res.ok) {
+  try {
+    const res = await fetch('/api/central-sheet');
+    const ct = res.headers.get('content-type') || '';
+    if (!res.ok || !ct.includes('application/json')) {
+      return {
+        spreadsheetId: null,
+        spreadsheetUrl: null,
+        ownerEmail: CENTRAL_OWNER_EMAIL,
+        sharedWithAnyone: false,
+        updatedAt: null,
+      };
+    }
+    return (await res.json()) as CentralSheetPointerResponse;
+  } catch {
     return {
       spreadsheetId: null,
       spreadsheetUrl: null,
@@ -613,7 +816,6 @@ export async function getCentralSheetPointer(): Promise<CentralSheetPointerRespo
       updatedAt: null,
     };
   }
-  return (await res.json()) as CentralSheetPointerResponse;
 }
 
 export async function registerCentralSheetPointer(
@@ -630,9 +832,10 @@ export async function registerCentralSheetPointer(
     },
     body: JSON.stringify({ spreadsheetId, spreadsheetUrl, sharedWithAnyone }),
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || 'Central sheet pointer नोंदवताना त्रुटी आली.');
+  const ct = res.headers.get('content-type') || '';
+  if (!res.ok || !ct.includes('application/json')) {
+    const err = ct.includes('application/json') ? await res.json().catch(() => ({})) : {};
+    throw new Error(err.error || 'केंद्रीय डेटाबेस संदर्भ नोंदवताना त्रुटी आली.');
   }
   return (await res.json()) as CentralSheetPointerResponse;
 }
@@ -815,6 +1018,12 @@ export async function loadEntireSheetDatabase(spreadsheetId: string): Promise<Sh
     staff: [],
     beneficiaries: [],
     pregnancyEpisodes: [],
+    ancVisits: [],
+    highRiskRecords: [],
+    maternalReferrals: [],
+    deliveryRecords: [],
+    babyRecords: [],
+    pncRecords: [],
     vaccinationSessions: [],
     sessionBeneficiaries: [],
     vaccineMaster: [],
@@ -892,15 +1101,21 @@ export async function loadEntireSheetDatabase(spreadsheetId: string): Promise<Sh
       beneficiaryCode: r.beneficiaryCode,
       beneficiaryType,
       childName: r.childName,
+      fullNameEnglish: r.fullNameEnglish || '',
       motherName: r.motherName || '',
       fatherName: r.fatherName || '',
       guardianName: r.guardianName || r.fatherName || r.motherName || '',
+      husbandMobile: r.husbandMobile || '',
       dob: r.dob || '',
       gender: (r.gender || (beneficiaryType === 'PREGNANT_WOMAN' ? 'स्त्री' : 'मुलगा')) as Beneficiary['gender'],
       mobile: r.mobile || '',
       aadhaarNumber: r.aadhaarNumber || '',
       caste: r.caste || '',
       category: r.category || '',
+      bloodGroup: r.bloodGroup || '',
+      rhFactor: r.rhFactor || '',
+      plannedDeliveryPlace: r.plannedDeliveryPlace || '',
+      plannedHospitalName: r.plannedHospitalName || '',
       address: r.address || '',
       subcentreId: r.subcentreId,
       subcentreName: r.subcentreName,
@@ -930,6 +1145,19 @@ export async function loadEntireSheetDatabase(spreadsheetId: string): Promise<Sh
       pregnancyRegistrationDate: r.pregnancyRegistrationDate || '',
       pregnancyStatus: (r.pregnancyStatus || 'सक्रिय') as PregnancyEpisode['pregnancyStatus'],
       gravidaPara: r.gravidaPara || '',
+      gravida: parseNullableNum(r.gravida),
+      para: parseNullableNum(r.para),
+      abortions: parseNullableNum(r.abortions),
+      livingChildren: parseNullableNum(r.livingChildren),
+      previousPregnancyHistory: r.previousPregnancyHistory || '',
+      previousCaesarean: (r.previousCaesarean || '') as PregnancyEpisode['previousCaesarean'],
+      previousComplications: r.previousComplications || '',
+      bloodGroup: r.bloodGroup || '',
+      rhFactor: r.rhFactor || '',
+      eddHistoryJson: r.eddHistoryJson || '',
+      isHighRisk: parseBool(r.isHighRisk),
+      highRiskReasonsJson: r.highRiskReasonsJson || '',
+      currentHrpStatus: r.currentHrpStatus || '',
       outcomeDate: r.outcomeDate || '',
       notes: r.notes || '',
       createdBy: r.createdBy,
@@ -937,6 +1165,181 @@ export async function loadEntireSheetDatabase(spreadsheetId: string): Promise<Sh
       updatedAt: r.updatedAt,
     }))
     .sort((a, b) => b.mcDate.localeCompare(a.mcDate) || b.createdAt.localeCompare(a.createdAt));
+
+  const ancVisits: AncVisitRecord[] = rawByTab.ancVisits
+    .map((r) => ({
+      id: r.id,
+      visitNumber: parseNum(r.visitNumber, 1),
+      visitLabel: r.visitLabel || `ANC-${parseNum(r.visitNumber, 1)}`,
+      beneficiaryId: r.beneficiaryId,
+      beneficiaryCode: r.beneficiaryCode,
+      pregnancyEpisodeId: r.pregnancyEpisodeId,
+      episodeCode: r.episodeCode,
+      sessionId: r.sessionId || '',
+      subcentreId: r.subcentreId,
+      subcentreName: r.subcentreName,
+      villageId: r.villageId,
+      villageName: r.villageName,
+      visitDate: r.visitDate,
+      gestationalWeeks: parseNum(r.gestationalWeeks, 0),
+      gestationalDays: parseNum(r.gestationalDays, 0),
+      gestationalAgeText: r.gestationalAgeText || '-',
+      weightKg: r.weightKg || '',
+      heightCm: r.heightCm || '',
+      bp: r.bp || '',
+      bpSystolic: parseNullableNum(r.bpSystolic),
+      bpDiastolic: parseNullableNum(r.bpDiastolic),
+      hb: r.hb || '',
+      bloodSugar: r.bloodSugar || '',
+      urineAlbumin: r.urineAlbumin || '',
+      urineSugar: r.urineSugar || '',
+      bloodTests: r.bloodTests || '',
+      otherTests: r.otherTests || '',
+      doctorObservation: r.doctorObservation || '',
+      treatmentAdvice: r.treatmentAdvice || '',
+      nextVisitDate: r.nextVisitDate || '',
+      staffId: r.staffId,
+      staffName: r.staffName,
+      staffDesignation: r.staffDesignation || '',
+      remarks: r.remarks || '',
+      createdBy: r.createdBy,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+    }))
+    .sort((a, b) => a.visitDate.localeCompare(b.visitDate) || a.visitNumber - b.visitNumber);
+
+  const highRiskRecords: HighRiskRecord[] = rawByTab.highRiskRecords
+    .map((r) => ({
+      id: r.id,
+      beneficiaryId: r.beneficiaryId,
+      beneficiaryCode: r.beneficiaryCode,
+      pregnancyEpisodeId: r.pregnancyEpisodeId,
+      episodeCode: r.episodeCode,
+      isHighRisk: (r.isHighRisk === 'YES' ? 'YES' : 'NO') as HighRiskRecord['isHighRisk'],
+      identificationDate: r.identificationDate || '',
+      reasonsJson: r.reasonsJson || '[]',
+      otherReasonText: r.otherReasonText || '',
+      doctorAdvice: r.doctorAdvice || '',
+      treatmentInfo: r.treatmentInfo || '',
+      referralRequired: (r.referralRequired || '') as HighRiskRecord['referralRequired'],
+      referralDate: r.referralDate || '',
+      referralHospital: r.referralHospital || '',
+      referralReason: r.referralReason || '',
+      followUpDate: r.followUpDate || '',
+      followUpStatus: r.followUpStatus || '',
+      currentStatus: r.currentStatus || '',
+      statusHistoryJson: r.statusHistoryJson || '[]',
+      approvedByMO: r.approvedByMO || '',
+      createdBy: r.createdBy,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+    }))
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+
+  const maternalReferrals: MaternalReferralRecord[] = rawByTab.maternalReferrals
+    .map((r) => ({
+      id: r.id,
+      beneficiaryId: r.beneficiaryId,
+      beneficiaryCode: r.beneficiaryCode,
+      pregnancyEpisodeId: r.pregnancyEpisodeId,
+      episodeCode: r.episodeCode,
+      highRiskRecordId: r.highRiskRecordId || '',
+      referralDate: r.referralDate,
+      referredFrom: r.referredFrom || '',
+      referredToHospital: r.referredToHospital || '',
+      referralReason: r.referralReason || '',
+      transportArrangement: r.transportArrangement || '',
+      followUpDate: r.followUpDate || '',
+      followUpStatus: (r.followUpStatus || 'प्रलंबित') as MaternalReferralRecord['followUpStatus'],
+      outcomeNotes: r.outcomeNotes || '',
+      referredByStaff: r.referredByStaff || '',
+      createdBy: r.createdBy,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+    }))
+    .sort((a, b) => b.referralDate.localeCompare(a.referralDate));
+
+  const deliveryRecords: DeliveryRecord[] = rawByTab.deliveryRecords
+    .map((r) => ({
+      id: r.id,
+      beneficiaryId: r.beneficiaryId,
+      beneficiaryCode: r.beneficiaryCode,
+      pregnancyEpisodeId: r.pregnancyEpisodeId,
+      episodeCode: r.episodeCode,
+      plannedEddDate: r.plannedEddDate || '',
+      plannedDeliveryPlace: r.plannedDeliveryPlace || '',
+      plannedHospitalName: r.plannedHospitalName || '',
+      deliveryPlanNotes: r.deliveryPlanNotes || '',
+      referralRequiredBeforeDelivery: (r.referralRequiredBeforeDelivery || '') as DeliveryRecord['referralRequiredBeforeDelivery'],
+      actualDeliveryDate: r.actualDeliveryDate || '',
+      actualDeliveryPlace: r.actualDeliveryPlace || '',
+      actualHospitalName: r.actualHospitalName || '',
+      deliveryType: (r.deliveryType || 'Normal Delivery') as DeliveryRecord['deliveryType'],
+      deliveryTypeOther: r.deliveryTypeOther || '',
+      numberOfBabies: parseNum(r.numberOfBabies, 1),
+      motherCondition: r.motherCondition || '',
+      deliveryComplications: r.deliveryComplications || '',
+      referralDetails: r.referralDetails || '',
+      attendedByStaff: r.attendedByStaff || '',
+      isCompleted: parseBool(r.isCompleted),
+      createdBy: r.createdBy,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+    }))
+    .sort((a, b) => b.actualDeliveryDate.localeCompare(a.actualDeliveryDate));
+
+  const babyRecords: BabyRecord[] = rawByTab.babyRecords
+    .map((r) => ({
+      id: r.id,
+      babyCode: r.babyCode,
+      motherBeneficiaryId: r.motherBeneficiaryId,
+      motherBeneficiaryCode: r.motherBeneficiaryCode,
+      pregnancyEpisodeId: r.pregnancyEpisodeId,
+      episodeCode: r.episodeCode,
+      deliveryRecordId: r.deliveryRecordId,
+      babyNumber: parseNum(r.babyNumber, 1),
+      babyName: r.babyName || '',
+      gender: (r.gender || 'मुलगा') as BabyRecord['gender'],
+      birthWeightGrams: parseNullableNum(r.birthWeightGrams),
+      birthOutcome: (r.birthOutcome || 'Live Birth') as BabyRecord['birthOutcome'],
+      birthOutcomeOther: r.birthOutcomeOther || '',
+      babyCondition: r.babyCondition || '',
+      dob: r.dob || '',
+      notes: r.notes || '',
+      createdBy: r.createdBy,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+    }))
+    .sort((a, b) => b.dob.localeCompare(a.dob) || a.babyNumber - b.babyNumber);
+
+  const pncRecords: PncRecord[] = rawByTab.pncRecords
+    .map((r) => ({
+      id: r.id,
+      visitNumber: parseNum(r.visitNumber, 1),
+      visitLabel: r.visitLabel || `PNC-${parseNum(r.visitNumber, 1)}`,
+      beneficiaryId: r.beneficiaryId,
+      beneficiaryCode: r.beneficiaryCode,
+      pregnancyEpisodeId: r.pregnancyEpisodeId,
+      episodeCode: r.episodeCode,
+      deliveryRecordId: r.deliveryRecordId || '',
+      pncDate: r.pncDate,
+      motherBp: r.motherBp || '',
+      motherHealthStatus: r.motherHealthStatus || '',
+      bleedingStatus: r.bleedingStatus || '',
+      breastfeedingStatus: r.breastfeedingStatus || '',
+      babyWeightGrams: parseNullableNum(r.babyWeightGrams),
+      babyHealthStatus: r.babyHealthStatus || '',
+      breastfeedingCounselling: (r.breastfeedingCounselling || '') as PncRecord['breastfeedingCounselling'],
+      treatmentGiven: r.treatmentGiven || '',
+      nextFollowUpDate: r.nextFollowUpDate || '',
+      staffId: r.staffId,
+      staffName: r.staffName,
+      remarks: r.remarks || '',
+      createdBy: r.createdBy,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+    }))
+    .sort((a, b) => a.pncDate.localeCompare(b.pncDate) || a.visitNumber - b.visitNumber);
 
   const vaccinationSessions: VaccinationSession[] = rawByTab.vaccinationSessions
     .map((r) => ({
@@ -1087,6 +1490,7 @@ export async function loadEntireSheetDatabase(spreadsheetId: string): Promise<Sh
       checklistCode: r.checklistCode,
       sessionId: r.sessionId || '',
       sessionCode: r.sessionCode || '',
+      checklistStaffName: r.checklistStaffName || r.monitorName || r.createdBy || '',
       monitorName: r.monitorName || '',
       organization: (r.organization || 'Govt') as RiChecklist['organization'],
       organizationOther: r.organizationOther || '',
@@ -1115,6 +1519,7 @@ export async function loadEntireSheetDatabase(spreadsheetId: string): Promise<Sh
       mobilizerMobilizing: (r.mobilizerMobilizing || '') as RiChecklist['mobilizerMobilizing'],
       polioHraTagged: (r.polioHraTagged || '') as RiChecklist['polioHraTagged'],
       vaccineDeliveredBy: (r.vaccineDeliveredBy || '') as RiChecklist['vaccineDeliveredBy'],
+      vaccineCarrierName: r.vaccineCarrierName || '',
       vaccines: (parseJsonObj(r.vaccines) || {}) as Record<string, RiVaccineStatusEntry>,
       logistics: (parseJsonObj(r.logistics) || {}) as Record<string, RiLogisticAvailability>,
       cuttingWithHubCutter: (r.cuttingWithHubCutter || '') as RiChecklist['cuttingWithHubCutter'],
@@ -1183,6 +1588,12 @@ export async function loadEntireSheetDatabase(spreadsheetId: string): Promise<Sh
     staff,
     beneficiaries,
     pregnancyEpisodes,
+    ancVisits,
+    highRiskRecords,
+    maternalReferrals,
+    deliveryRecords,
+    babyRecords,
+    pncRecords,
     vaccinationSessions,
     sessionBeneficiaries,
     vaccineMaster,

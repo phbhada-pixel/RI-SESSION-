@@ -8,17 +8,20 @@ import {
   VaccinationRecord,
   VaccinationSession,
 } from '../types';
-import { calculateAgeAsOf, formatDDMMYYYY } from './dateUtils';
+import { calculateAgeAsOf, formatDDMMYYYY, getTodayIST } from './dateUtils';
 import { DoseEligibilityResult, evaluateBeneficiaryEligibility } from './eligibilityEngine';
 import { exportMultiSheetExcel } from './exportUtils';
 import { formatDateTimeIST, formatNumberIN } from './localeUtils';
 import {
+  buildVitalsComparisonSummary,
   calculateGestationalAgeLabel,
   formatDeliveryFacilityTypeMarathi,
   getMaternalServiceCatalog,
+  groupMaternalVisitsByDate,
   isEveryVisitAncService,
 } from './maternalUtils';
 import { maskAadhaar } from './privacyUtils';
+import { generateCompletePregnancyPDFBlob } from './maternalPdfReport';
 
 export interface SessionReportBeneficiaryRow {
   serialNo: number;
@@ -1516,6 +1519,551 @@ export async function downloadMaternalSessionPDF(
   const a = document.createElement('a');
   a.href = url;
   a.download = `PHC_Bhada_Maternal_ANC_Report_${report.session.sessionCode}.pdf`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+// ==================== C. BENEFICIARY-WISE CONSOLIDATED LONGITUDINAL PDF ====================
+
+export async function generateBeneficiaryConsolidatedPDFBlob(
+  db: SheetDatabase,
+  beneficiaryId: string,
+  preparedBy: string
+): Promise<{ blob: Blob; beneficiary: Beneficiary }> {
+  const ben = db.beneficiaries.find((b) => b.id === beneficiaryId);
+  if (!ben) {
+    throw new Error('लाभार्थी आढळला नाही.');
+  }
+
+  if ((ben.beneficiaryType || 'CHILD') === 'PREGNANT_WOMAN') {
+    return generateCompletePregnancyPDFBlob(db, beneficiaryId, preparedBy);
+  }
+
+  await ensureDevanagariFontsLoaded();
+
+  const todayISO = getTodayIST();
+  const generatedAtIST = formatDateTimeIST(new Date().toISOString());
+  const isWoman = (ben.beneficiaryType || 'CHILD') === 'PREGNANT_WOMAN';
+  const accent = isWoman ? '#0f766e' : '#0f766e';
+  const reportLabel = 'लाभार्थी एकत्रित संपूर्ण अभिलेख';
+
+  const sessionMap = new Map(db.vaccinationSessions.map((s) => [s.id, s]));
+  const subcentreMap = new Map(db.subcentres.map((s) => [s.id, s.name]));
+  const villageMap = new Map(db.villages.map((v) => [v.id, v.name]));
+
+  const resolvePlace = (sessionId?: string, villageId?: string, subcentreId?: string) => {
+    const ses = sessionId ? sessionMap.get(sessionId) : undefined;
+    const scName = ses?.subcentreName || (subcentreId ? subcentreMap.get(subcentreId) : '') || ben.subcentreName || '-';
+    const vilName = ses?.villageName || (villageId ? villageMap.get(villageId) : '') || ben.villageName || '-';
+    const loc = ses?.location ? ` · ${ses.location}` : '';
+    return {
+      sessionCode: ses?.sessionCode || '-',
+      sessionDate: ses?.sessionDate || '',
+      placeText: `${vilName}${loc} (${scName})`,
+      choAnm: ses ? [ses.anmName, ses.choName].filter(Boolean).join(' / ') : '-',
+    };
+  };
+
+  const benVaccinations = db.vaccinationRecords
+    .filter((r) => r.beneficiaryId === ben.id)
+    .sort((a, b) => a.administeredDate.localeCompare(b.administeredDate));
+
+  const benCheckups = db.maternalServiceRecords
+    .filter((r) => r.beneficiaryId === ben.id)
+    .sort((a, b) => (a.visitDate || a.sessionDate).localeCompare(b.visitDate || b.sessionDate));
+
+  const benAttendance = db.sessionBeneficiaries.filter((sb) => sb.beneficiaryId === ben.id);
+  const benEpisodes = db.pregnancyEpisodes
+    .filter((ep) => ep.beneficiaryId === ben.id)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+  // Build deduplicated list of all visited locations / sessions across the PHC
+  const visitedSessionMap = new Map<
+    string,
+    { date: string; sessionCode: string; placeText: string; servicesSummary: string[] }
+  >();
+  const ensureVisitBucket = (sessionId: string, fallbackDate: string, vilId?: string, scId?: string) => {
+    const key = sessionId || `DATE_${fallbackDate}_${vilId || ''}`;
+    let bucket = visitedSessionMap.get(key);
+    if (!bucket) {
+      const p = resolvePlace(sessionId, vilId, scId);
+      bucket = {
+        date: p.sessionDate || fallbackDate,
+        sessionCode: p.sessionCode,
+        placeText: p.placeText,
+        servicesSummary: [],
+      };
+      visitedSessionMap.set(key, bucket);
+    }
+    return bucket;
+  };
+
+  for (const sb of benAttendance) {
+    const p = resolvePlace(sb.sessionId, sb.villageId, sb.subcentreId);
+    ensureVisitBucket(sb.sessionId, p.sessionDate || sb.addedAt.slice(0, 10), sb.villageId, sb.subcentreId);
+  }
+  for (const v of benVaccinations) {
+    const b = ensureVisitBucket(v.sessionId, v.administeredDate, v.villageId, v.subcentreId);
+    b.servicesSummary.push(v.doseName);
+  }
+  for (const c of benCheckups) {
+    const b = ensureVisitBucket(c.sessionId, c.visitDate || c.sessionDate, c.villageId, c.subcentreId);
+    b.servicesSummary.push(
+      `${c.serviceName.split('(')[0].trim()}${c.serviceValue ? `: ${c.serviceValue}` : ''}`
+    );
+  }
+
+  const visitedLocations = Array.from(visitedSessionMap.values()).sort((a, b) =>
+    a.date.localeCompare(b.date)
+  );
+
+  // Synthetic session header metadata for shared canvas layout helpers
+  const syntheticMeta: VaccinationSession = {
+    id: ben.id,
+    sessionCode: ben.beneficiaryCode,
+    phcName: 'प्राथमिक आरोग्य केंद्र भादा',
+    subcentreId: ben.subcentreId,
+    subcentreName: `एकत्रित ठिकाणे: ${formatNumberIN(visitedLocations.length)}`,
+    villageId: ben.villageId,
+    villageName: ben.villageName,
+    sessionDate: todayISO,
+    location: ben.address || ben.villageName,
+    sessionType: 'नियमित',
+    choName: '',
+    anmName: '',
+    status: 'सुरू',
+    editDeadlineAt: todayISO,
+    createdBy: ben.createdBy,
+    createdAt: ben.createdAt,
+    updatedAt: ben.updatedAt,
+  };
+
+  const pages: PageSurface[] = [];
+  let pPage = createSurface('portrait');
+  pages.push(pPage);
+
+  // Top Header Banner
+  {
+    const { ctx, logicalW } = pPage;
+    ctx.fillStyle = accent;
+    ctx.fillRect(MARGIN_X, pPage.y, logicalW - MARGIN_X * 2, 58);
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.font = `700 14.5px ${FONT_FAMILY}`;
+    ctx.fillText(
+      'प्राथमिक आरोग्य केंद्र भादा — लाभार्थी एकत्रित संपूर्ण आरोग्य व लसीकरण अभिलेख',
+      logicalW / 2,
+      pPage.y + 11
+    );
+    ctx.font = `500 10.5px ${FONT_FAMILY}`;
+    ctx.fillText(
+      `सर्व उपकेंद्रे, गावे व लसीकरण सत्रांमधील संपूर्ण डेटा (${isWoman ? 'गरोदर माता कार्ड' : 'बालक लसीकरण व वाढ कार्ड'})`,
+      logicalW / 2,
+      pPage.y + 34
+    );
+    pPage.y += 70;
+  }
+
+  // Section A: Permanent Profile
+  pPage = drawSectionBanner(
+    pPage,
+    'अ. कायमस्वरूपी लाभार्थी प्रोफाइल (Permanent Beneficiary Profile)',
+    pages,
+    syntheticMeta,
+    reportLabel,
+    accent
+  );
+
+  const childEval = !isWoman
+    ? evaluateBeneficiaryEligibility(
+        ben,
+        todayISO,
+        db.vaccineSchedule.filter((s) => s.isActive && s.isValidated).sort((a, b) => a.doseOrder - b.doseOrder),
+        benVaccinations
+      )
+    : null;
+
+  pPage = drawPaginatedTable(
+    pPage,
+    pages,
+    syntheticMeta,
+    reportLabel,
+    [
+      { header: 'माहिती घटक', widthWeight: 25 },
+      { header: 'तपशील', widthWeight: 25 },
+      { header: 'माहिती घटक', widthWeight: 25 },
+      { header: 'तपशील', widthWeight: 25 },
+    ],
+    [
+      [
+        'लाभार्थी आयडी',
+        ben.beneficiaryCode,
+        'प्रकार व स्थिती',
+        `${isWoman ? 'गरोदर माता' : 'बालक लाभार्थी'} (${ben.status})`,
+      ],
+      [
+        isWoman ? 'मातेचे पूर्ण नाव' : 'बालकाचे पूर्ण नाव',
+        ben.childName,
+        isWoman ? 'पतीचे नाव' : 'पालक / आईचे नाव',
+        isWoman
+          ? ben.guardianName || ben.fatherName || '-'
+          : `${ben.guardianName || ben.fatherName || '-'} (आई: ${ben.motherName || '-'})`,
+      ],
+      [
+        isWoman ? 'नोंदणी दिनांक' : 'जन्मतारीख व आजचे वय',
+        isWoman
+          ? formatDDMMYYYY(ben.registrationDate)
+          : `${formatDDMMYYYY(ben.dob)} (${childEval?.ageOnTargetDateLabel || '-'})`,
+        'लिंग / जात / प्रवर्ग',
+        `${ben.gender} · ${ben.caste || '-'} (${ben.category || '-'})`,
+      ],
+      [
+        'मोबाईल क्रमांक',
+        ben.mobile || '-',
+        'आधार (Masked)',
+        maskAadhaar(ben.aadhaarNumber),
+      ],
+      [
+        'मूळ उपकेंद्र व गाव',
+        `${ben.subcentreName} · ${ben.villageName}`,
+        'संपूर्ण पत्ता / अंगणवाडी',
+        `${ben.address || '-'}${ben.anganwadi ? ` (अंगणवाडी: ${ben.anganwadi})` : ''}`,
+      ],
+      [
+        'एकूण भेट दिलेली सत्रे',
+        `${formatNumberIN(visitedLocations.length)} सत्रे / ठिकाणे`,
+        'एकूण नोंदवलेल्या सेवा',
+        isWoman
+          ? `${formatNumberIN(benEpisodes.length)} गर्भधारणा · ${formatNumberIN(benCheckups.length)} ANC नोंदी`
+          : `${formatNumberIN(benVaccinations.length)} लस डोस · ${formatNumberIN(benCheckups.length)} तपासणी नोंदी`,
+      ],
+    ],
+    { fontSize: 9, headerFontSize: 9, accentColor: accent }
+  );
+
+  // Section B: All Visited Locations & Sessions
+  pPage = drawSectionBanner(
+    pPage,
+    'ब. सेवा घेतलेली सर्व ठिकाणे व सत्रे (All Sessions & Places Visited)',
+    pages,
+    syntheticMeta,
+    reportLabel,
+    accent
+  );
+
+  pPage = drawPaginatedTable(
+    pPage,
+    pages,
+    syntheticMeta,
+    reportLabel,
+    [
+      { header: 'अ.क्र.', widthWeight: 7, align: 'center' },
+      { header: 'दिनांक', widthWeight: 14 },
+      { header: 'सत्र कोड', widthWeight: 20 },
+      { header: 'ठिकाण (गाव व उपकेंद्र)', widthWeight: 32 },
+      { header: 'दिलेल्या सेवा / डोस सारांश', widthWeight: 27 },
+    ],
+    visitedLocations.length > 0
+      ? visitedLocations.map((loc, idx) => [
+          String(idx + 1),
+          formatDDMMYYYY(loc.date),
+          loc.sessionCode,
+          loc.placeText,
+          loc.servicesSummary.length > 0
+            ? Array.from(new Set(loc.servicesSummary)).join(', ')
+            : 'सत्रात उपस्थिती नोंद',
+        ])
+      : [['-', '-', '-', 'अद्याप कोणत्याही सत्राची नोंद नाही', '-']],
+    {
+      fontSize: 8.6,
+      headerFontSize: 9,
+      repeatBannerTitle: 'ब. सेवा घेतलेली सर्व ठिकाणे व सत्रे',
+      accentColor: accent,
+    }
+  );
+
+  // Section C: Growth & Vitals Comparison (Weight, Height, Hb, BP, BSL)
+  const vitalsSummary = buildVitalsComparisonSummary(benCheckups);
+  const vitalsVisits = groupMaternalVisitsByDate(benCheckups);
+
+  pPage = drawSectionBanner(
+    pPage,
+    'क. वाढ व तपासणी तुलना — वजन, उंची, Hb, BP, BSL (Growth & Vitals Comparison)',
+    pages,
+    syntheticMeta,
+    reportLabel,
+    accent
+  );
+
+  pPage = drawPaginatedTable(
+    pPage,
+    pages,
+    syntheticMeta,
+    reportLabel,
+    [
+      { header: 'तपासणी घटक', widthWeight: 24 },
+      { header: 'शेवटची नोंद व दिनांक', widthWeight: 26 },
+      { header: 'त्याआधीची नोंद व दिनांक', widthWeight: 26 },
+      { header: 'वाढ / बदल तुलना', widthWeight: 24 },
+    ],
+    vitalsSummary.map((v) => [
+      v.label,
+      v.latestValue ? `${v.latestValue} ${v.unit} (${formatDDMMYYYY(v.latestDate)})` : 'नोंद नाही',
+      v.previousValue ? `${v.previousValue} ${v.unit} (${formatDDMMYYYY(v.previousDate)})` : '-',
+      v.deltaText || '-',
+    ]),
+    { fontSize: 8.6, headerFontSize: 8.8, accentColor: accent }
+  );
+
+  if (vitalsVisits.length > 0) {
+    pPage = drawPaginatedTable(
+      pPage,
+      pages,
+      syntheticMeta,
+      reportLabel,
+      [
+        { header: 'भेट दि.', widthWeight: 12 },
+        { header: 'ठिकाण / सत्र', widthWeight: 21 },
+        { header: 'वजन', widthWeight: 9 },
+        { header: 'उंची', widthWeight: 9 },
+        { header: 'Hb', widthWeight: 9 },
+        { header: 'BP', widthWeight: 11 },
+        { header: 'BSL', widthWeight: 10 },
+        { header: 'इतर / कर्मचारी', widthWeight: 19 },
+      ],
+      vitalsVisits
+        .slice()
+        .sort((a, b) => a.visitDate.localeCompare(b.visitDate))
+        .map((vr) => {
+          const p = resolvePlace(vr.sessionId, vr.villageId, vr.subcentreId);
+          const extra = [
+            vr.ancExam !== '-' ? `ANC: ${vr.ancExam}` : '',
+            vr.bloodUrine !== '-' ? `रक्त/लघवी: ${vr.bloodUrine}` : '',
+            vr.tdDoses !== '-' ? `Td: ${vr.tdDoses}` : '',
+            vr.supplements !== '-' ? vr.supplements : '',
+            `(${vr.staffNames})`,
+          ]
+            .filter(Boolean)
+            .join(' · ');
+          return [
+            formatDDMMYYYY(vr.visitDate),
+            `${p.placeText}\n${p.sessionCode}`,
+            vr.weight,
+            vr.height,
+            vr.hb,
+            vr.bp,
+            vr.bsl,
+            extra || '-',
+          ];
+        }),
+      {
+        fontSize: 8.2,
+        headerFontSize: 8.6,
+        repeatBannerTitle: 'क. तपासणी भेटनिहाय नोंदी',
+        accentColor: accent,
+      }
+    );
+  }
+
+  // Section D: Category-Specific Complete History (Landscape Page for Wide Readability)
+  let lPage = createSurface('landscape');
+  pages.push(lPage);
+  drawRunningHeader(lPage, syntheticMeta, reportLabel);
+
+  if (!isWoman && childEval) {
+    lPage = drawSectionBanner(
+      lPage,
+      'ड. आजपर्यंत दिलेल्या सर्व बालक लसींचा संपूर्ण इतिहास (Complete Vaccination Record)',
+      pages,
+      syntheticMeta,
+      reportLabel,
+      accent
+    );
+    lPage = drawPaginatedTable(
+      lPage,
+      pages,
+      syntheticMeta,
+      reportLabel,
+      [
+        { header: 'अ.क्र.', widthWeight: 6, align: 'center' },
+        { header: 'डोस', widthWeight: 15 },
+        { header: 'लस', widthWeight: 15 },
+        { header: 'दिलेली दिनांक', widthWeight: 12 },
+        { header: 'बॅच क्रमांक', widthWeight: 12 },
+        { header: 'ठिकाण (गाव / उपकेंद्र) व सत्र', widthWeight: 22 },
+        { header: 'लसीकरण कर्मचारी व शेरा', widthWeight: 18 },
+      ],
+      benVaccinations.length > 0
+        ? benVaccinations.map((rec, idx) => {
+            const p = resolvePlace(rec.sessionId, rec.villageId, rec.subcentreId);
+            return [
+              String(idx + 1),
+              rec.doseName,
+              rec.vaccineName,
+              formatDDMMYYYY(rec.administeredDate),
+              rec.batchNumber || '-',
+              `${p.placeText}\n(${p.sessionCode})`,
+              `${rec.staffName || '-'}${rec.remarks ? `\nशेरा: ${rec.remarks}` : ''}`,
+            ];
+          })
+        : [['-', '-', 'अद्याप कोणतीही लस नोंदवलेली नाही', '-', '-', '-', '-']],
+      {
+        fontSize: 8.6,
+        headerFontSize: 9,
+        repeatBannerTitle: 'ड. दिलेल्या सर्व लसींचा इतिहास',
+        accentColor: accent,
+      }
+    );
+
+    const remainingDoses = childEval.allDoseResults.filter((d) => d.status !== 'ADMINISTERED');
+    if (remainingDoses.length > 0) {
+      lPage = drawSectionBanner(
+        lPage,
+        'इ. देय व आगामी लसीकरण वेळापत्रक (Due & Upcoming Vaccines)',
+        pages,
+        syntheticMeta,
+        reportLabel,
+        accent
+      );
+      lPage = drawPaginatedTable(
+        lPage,
+        pages,
+        syntheticMeta,
+        reportLabel,
+        [
+          { header: 'अ.क्र.', widthWeight: 7, align: 'center' },
+          { header: 'डोस', widthWeight: 20 },
+          { header: 'लस', widthWeight: 20 },
+          { header: 'देय दिनांक', widthWeight: 15 },
+          { header: 'स्थिती', widthWeight: 38 },
+        ],
+        remainingDoses.map((d, idx) => [
+          String(idx + 1),
+          d.schedule.doseName,
+          d.schedule.vaccineName,
+          formatDDMMYYYY(d.dueDateISO),
+          d.status === 'DUE'
+            ? d.isOverdue
+              ? 'मुदत उलटलेला देय डोस (Overdue)'
+              : 'आज देय (Due Now)'
+            : d.reasonMarathi,
+        ]),
+        {
+          fontSize: 8.6,
+          headerFontSize: 9,
+          repeatBannerTitle: 'इ. देय व आगामी लसीकरण वेळापत्रक',
+          accentColor: accent,
+        }
+      );
+    }
+  } else {
+    lPage = drawSectionBanner(
+      lPage,
+      'ड. सर्व गर्भधारणा प्रकरणे (All Pregnancy Episodes)',
+      pages,
+      syntheticMeta,
+      reportLabel,
+      accent
+    );
+    lPage = drawPaginatedTable(
+      lPage,
+      pages,
+      syntheticMeta,
+      reportLabel,
+      [
+        { header: 'अ.क्र.', widthWeight: 6, align: 'center' },
+        { header: 'प्रकरण आयडी', widthWeight: 18 },
+        { header: 'MC दिनांक', widthWeight: 13 },
+        { header: 'EDD दिनांक', widthWeight: 13 },
+        { header: 'अपेक्षित प्रसूती ठिकाण व संस्था', widthWeight: 30 },
+        { header: 'Gravida / स्थिती', widthWeight: 20 },
+      ],
+      benEpisodes.length > 0
+        ? benEpisodes.map((ep, idx) => [
+            String(idx + 1),
+            ep.episodeCode,
+            formatDDMMYYYY(ep.mcDate),
+            formatDDMMYYYY(ep.eddDate),
+            `${ep.expectedDeliveryPlace || '-'} (${formatDeliveryFacilityTypeMarathi(
+              ep.deliveryFacilityType
+            )}${ep.hospitalName ? `: ${ep.hospitalName}` : ''})`,
+            `${ep.gravidaPara ? `${ep.gravidaPara} · ` : ''}${ep.pregnancyStatus}`,
+          ])
+        : [['-', '-', 'गर्भधारणा प्रकरण नोंदवलेले नाही', '-', '-', '-']],
+      {
+        fontSize: 8.6,
+        headerFontSize: 9,
+        repeatBannerTitle: 'ड. सर्व गर्भधारणा प्रकरणे',
+        accentColor: accent,
+      }
+    );
+
+    lPage = drawSectionBanner(
+      lPage,
+      'इ. सर्व ठिकाणच्या ANC तपासण्या व Td लसीकरण नोंदी (Complete ANC & Td Log)',
+      pages,
+      syntheticMeta,
+      reportLabel,
+      accent
+    );
+    lPage = drawPaginatedTable(
+      lPage,
+      pages,
+      syntheticMeta,
+      reportLabel,
+      [
+        { header: 'अ.क्र.', widthWeight: 6, align: 'center' },
+        { header: 'दिनांक', widthWeight: 11 },
+        { header: 'प्रकरण आयडी', widthWeight: 14 },
+        { header: 'ठिकाण (गाव / उपकेंद्र) व सत्र', widthWeight: 22 },
+        { header: 'सेवा / तपासणी', widthWeight: 20 },
+        { header: 'मूल्य / बॅच', widthWeight: 14 },
+        { header: 'कर्मचारी / शेरा', widthWeight: 13 },
+      ],
+      benCheckups.length > 0
+        ? benCheckups.map((rec, idx) => {
+            const p = resolvePlace(rec.sessionId, rec.villageId, rec.subcentreId);
+            return [
+              String(idx + 1),
+              formatDDMMYYYY(rec.visitDate || rec.sessionDate),
+              rec.episodeCode || '-',
+              `${p.placeText}\n(${p.sessionCode})`,
+              rec.serviceName,
+              `${rec.serviceValue || 'पूर्ण'}${rec.batchNumber ? `\nबॅच: ${rec.batchNumber}` : ''}`,
+              `${rec.staffName || '-'}${rec.remarks ? `\nशेरा: ${rec.remarks}` : ''}`,
+            ];
+          })
+        : [['-', '-', '-', '-', 'अद्याप ANC सेवा नोंदवलेली नाही', '-', '-']],
+      {
+        fontSize: 8.5,
+        headerFontSize: 8.8,
+        repeatBannerTitle: 'इ. सर्व ANC व Td नोंदी',
+        accentColor: accent,
+      }
+    );
+  }
+
+  drawSignatureFooterPage(pages, syntheticMeta, generatedAtIST, preparedBy, reportLabel, accent);
+  const blob = finalizePagesToPDFBlob(pages, syntheticMeta, generatedAtIST, reportLabel);
+  return { blob, beneficiary: ben };
+}
+
+export async function downloadBeneficiaryConsolidatedPDF(
+  db: SheetDatabase,
+  beneficiaryId: string,
+  preparedBy: string
+): Promise<void> {
+  const { blob, beneficiary } = await generateBeneficiaryConsolidatedPDFBlob(
+    db,
+    beneficiaryId,
+    preparedBy
+  );
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `PHC_Bhada_Beneficiary_${beneficiary.beneficiaryCode}.pdf`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);

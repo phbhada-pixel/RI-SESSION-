@@ -7,12 +7,22 @@ import {
   signOutGoogleWorkspace,
 } from '../config/firebase';
 import {
+  AncVisitRecord,
   AppUser,
   AuditLog,
+  BabyBirthOutcome,
+  BabyRecord,
   Beneficiary,
   DeliveryFacilityType,
+  DeliveryRecord,
+  DeliveryTypeOption,
+  EddHistoryEntry,
+  HighRiskRecord,
+  HrpHistoryEntry,
+  MaternalReferralRecord,
   MaternalServiceConfigItem,
   MaternalServiceRecord,
+  PncRecord,
   PregnancyEpisode,
   PregnancyStatus,
   RiChecklist,
@@ -51,7 +61,14 @@ import {
   TAB_COLUMNS,
 } from '../services/googleSheetsService';
 import { computeSessionEditDeadlineISO, getTodayIST, nowISO } from '../utils/dateUtils';
-import { calculateEddFromMcDate } from '../utils/maternalUtils';
+import {
+  calculateEddFromMcDate,
+  calculateGestationalWeeksAndDays,
+  formatGravidaSummary,
+  parseBpSystolicDiastolic,
+  parseJsonArraySafe,
+  validateTdDoseForEpisode,
+} from '../utils/maternalUtils';
 import { maskSensitiveFieldsForAudit, sanitizeOptionalAadhaar } from '../utils/privacyUtils';
 import { buildPhcBhadaStarterHierarchy, buildStandardNISData } from '../utils/nisSeedData';
 import { exportMultiSheetExcel, parseExcelFileToSheets } from '../utils/exportUtils';
@@ -115,7 +132,7 @@ interface SheetDataContextValue {
   sheetError: string;
   db: SheetDatabase | null;
   availableSheets: Array<{ id: string; name: string; webViewLink: string }>;
-  signIn: () => Promise<void>;
+  signIn: (options?: { switchAccount?: boolean; loginHint?: string }) => Promise<void>;
   logout: () => Promise<void>;
   hasRole: (roles: UserRole[]) => boolean;
   connectSheet: (urlOrId: string) => Promise<void>;
@@ -151,6 +168,15 @@ interface SheetDataContextValue {
       pregnancyRegistrationDate: string;
       pregnancyStatus: PregnancyStatus;
       gravidaPara?: string;
+      gravida?: number | null;
+      para?: number | null;
+      abortions?: number | null;
+      livingChildren?: number | null;
+      previousPregnancyHistory?: string;
+      previousCaesarean?: 'Yes' | 'No' | '';
+      previousComplications?: string;
+      bloodGroup?: string;
+      rhFactor?: string;
       notes?: string;
     }
   ) => Promise<{ beneficiary: Beneficiary; episode?: PregnancyEpisode }>;
@@ -166,6 +192,15 @@ interface SheetDataContextValue {
       pregnancyRegistrationDate: string;
       pregnancyStatus: PregnancyStatus;
       gravidaPara?: string;
+      gravida?: number | null;
+      para?: number | null;
+      abortions?: number | null;
+      livingChildren?: number | null;
+      previousPregnancyHistory?: string;
+      previousCaesarean?: 'Yes' | 'No' | '';
+      previousComplications?: string;
+      bloodGroup?: string;
+      rhFactor?: string;
       notes?: string;
     }
   ) => Promise<{ beneficiary: Beneficiary; episode?: PregnancyEpisode }>;
@@ -184,12 +219,22 @@ interface SheetDataContextValue {
       pregnancyRegistrationDate: string;
       pregnancyStatus: PregnancyStatus;
       gravidaPara?: string;
+      gravida?: number | null;
+      para?: number | null;
+      abortions?: number | null;
+      livingChildren?: number | null;
+      previousPregnancyHistory?: string;
+      previousCaesarean?: 'Yes' | 'No' | '';
+      previousComplications?: string;
+      bloodGroup?: string;
+      rhFactor?: string;
       notes?: string;
     }
   ) => Promise<PregnancyEpisode>;
   updatePregnancyEpisode: (
     episodeId: string,
-    updates: Partial<Omit<PregnancyEpisode, 'id' | 'episodeCode' | 'beneficiaryId' | 'beneficiaryCode' | 'createdBy' | 'createdAt'>>
+    updates: Partial<Omit<PregnancyEpisode, 'id' | 'episodeCode' | 'beneficiaryId' | 'beneficiaryCode' | 'createdBy' | 'createdAt'>>,
+    eddChangeReason?: string
   ) => Promise<void>;
   createSession: (
     data: Omit<
@@ -236,7 +281,7 @@ interface SheetDataContextValue {
     session: VaccinationSession,
     entries: Array<{
       beneficiary: Beneficiary;
-      episode: PregnancyEpisode;
+      episode?: PregnancyEpisode | null;
       serviceCode: string;
       serviceName: string;
       serviceValue: string;
@@ -250,6 +295,136 @@ interface SheetDataContextValue {
       id?: string;
     }
   ) => Promise<RiChecklist>;
+
+  // Expanded Maternal Lifecycle Mutations
+  recordAncVisit: (data: {
+    beneficiary: Beneficiary;
+    episode: PregnancyEpisode;
+    visitNumber: number;
+    visitLabel: string;
+    visitDate: string;
+    weightKg?: string;
+    heightCm?: string;
+    bp?: string;
+    hb?: string;
+    bloodSugar?: string;
+    urineAlbumin?: string;
+    urineSugar?: string;
+    bloodTests?: string;
+    otherTests?: string;
+    doctorObservation?: string;
+    treatmentAdvice?: string;
+    nextVisitDate?: string;
+    staffName: string;
+    staffDesignation?: string;
+    remarks?: string;
+    sessionId?: string;
+  }) => Promise<AncVisitRecord>;
+
+  saveHighRiskRecord: (data: {
+    beneficiary: Beneficiary;
+    episode: PregnancyEpisode;
+    isHighRisk: 'YES' | 'NO';
+    identificationDate: string;
+    reasons: string[];
+    otherReasonText?: string;
+    doctorAdvice?: string;
+    treatmentInfo?: string;
+    referralRequired?: 'Yes' | 'No' | '';
+    referralDate?: string;
+    referralHospital?: string;
+    referralReason?: string;
+    followUpDate?: string;
+    followUpStatus?: string;
+    currentStatus?: string;
+    approvedByMO?: string;
+    note?: string;
+  }) => Promise<HighRiskRecord>;
+
+  recordMaternalImmunizationAndSupplements: (data: {
+    beneficiary: Beneficiary;
+    episode: PregnancyEpisode;
+    visitDate: string;
+    staffName: string;
+    items: Array<{
+      serviceCode: string;
+      serviceName: string;
+      serviceValue: string;
+      batchNumber?: string;
+      remarks?: string;
+    }>;
+  }) => Promise<MaternalServiceRecord[]>;
+
+  recordMaternalReferral: (data: {
+    beneficiary: Beneficiary;
+    episode: PregnancyEpisode;
+    highRiskRecordId?: string;
+    referralDate: string;
+    referredFrom: string;
+    referredToHospital: string;
+    referralReason: string;
+    transportArrangement?: string;
+    followUpDate?: string;
+    followUpStatus: MaternalReferralRecord['followUpStatus'];
+    outcomeNotes?: string;
+    referredByStaff: string;
+  }) => Promise<MaternalReferralRecord>;
+
+  updateMaternalReferralStatus: (
+    referralId: string,
+    updates: Partial<Pick<MaternalReferralRecord, 'followUpStatus' | 'followUpDate' | 'outcomeNotes'>>
+  ) => Promise<void>;
+
+  recordDeliveryAndBabies: (data: {
+    beneficiary: Beneficiary;
+    episode: PregnancyEpisode;
+    plannedEddDate?: string;
+    plannedDeliveryPlace?: string;
+    plannedHospitalName?: string;
+    deliveryPlanNotes?: string;
+    referralRequiredBeforeDelivery?: 'Yes' | 'No' | '';
+    actualDeliveryDate: string;
+    actualDeliveryPlace: string;
+    actualHospitalName?: string;
+    deliveryType: DeliveryTypeOption;
+    deliveryTypeOther?: string;
+    motherCondition: string;
+    deliveryComplications?: string;
+    referralDetails?: string;
+    attendedByStaff: string;
+    markEpisodeDelivered: boolean;
+    babies: Array<{
+      babyName: string;
+      gender: BabyRecord['gender'];
+      birthWeightGrams: number | null;
+      birthOutcome: BabyBirthOutcome;
+      birthOutcomeOther?: string;
+      babyCondition: string;
+      notes?: string;
+    }>;
+  }) => Promise<{ delivery: DeliveryRecord; babies: BabyRecord[] }>;
+
+  recordPncVisit: (data: {
+    beneficiary: Beneficiary;
+    episode: PregnancyEpisode;
+    deliveryRecordId?: string;
+    visitNumber: number;
+    visitLabel: string;
+    pncDate: string;
+    motherBp?: string;
+    motherHealthStatus: string;
+    bleedingStatus: string;
+    breastfeedingStatus: string;
+    babyWeightGrams?: number | null;
+    babyHealthStatus: string;
+    breastfeedingCounselling: 'Yes' | 'No' | '';
+    treatmentGiven?: string;
+    nextFollowUpDate?: string;
+    staffName: string;
+    remarks?: string;
+  }) => Promise<PncRecord>;
+
+  seedDemoPregnancyRecord: () => Promise<{ beneficiary: Beneficiary; episode: PregnancyEpisode }>;
 }
 
 const SheetDataContext = createContext<SheetDataContextValue | undefined>(undefined);
@@ -312,7 +487,7 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     async (spreadsheetId: string, authUser: User) => {
       if (typeof navigator !== 'undefined' && !navigator.onLine) {
         setSyncStatus('OFFLINE');
-        setSheetError('इंटरनेट कनेक्शन उपलब्ध नाही. Google Sheet लोड करता आले नाही.');
+        setSheetError('इंटरनेट कनेक्शन उपलब्ध नाही. डेटा लोड करता आला नाही.');
         return;
       }
       setSheetLoading(true);
@@ -358,10 +533,20 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setLastSyncedAt(nowISO());
       } catch (err) {
         setSyncStatus('FAILED');
-        const rawMsg = err instanceof Error ? err.message : 'Google Sheet लोड करताना त्रुटी आली.';
-        if (rawMsg.toLowerCase().includes('permission') || rawMsg.includes('403')) {
+        const rawMsg = err instanceof Error ? err.message : 'डेटा लोड करताना त्रुटी आली.';
+        const lower = rawMsg.toLowerCase();
+        if (
+          lower.includes('invalid_token') ||
+          lower.includes('unauthenticated') ||
+          lower.includes('invalid authentication') ||
+          rawMsg.includes('401')
+        ) {
+          clearInMemoryAccessToken();
+          setNeedsAuth(true);
+          setSheetError('');
+        } else if (lower.includes('permission') || rawMsg.includes('403')) {
           setSheetError(
-            `या खात्याला (${authUser.email}) ${CENTRAL_OWNER_EMAIL} च्या Google Sheet वर संपादन परवानगी नाही. कृपया ${CENTRAL_OWNER_EMAIL} कडून Sheet शेअर करून घ्या.`
+            `या खात्याला (${authUser.email}) डेटा संपादन परवानगी नाही. कृपया PHC भादा प्रशासकाकडून प्रवेश सक्रिय करून घ्या.`
           );
         } else {
           setSheetError(rawMsg);
@@ -381,7 +566,11 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       try {
         const email = (authUser.email || '').toLowerCase();
         const urlParams = new URLSearchParams(window.location.search);
-        const urlSheetId = urlParams.get('sheetId');
+        const hashQueryIndex = window.location.hash.indexOf('?');
+        const hashParams = new URLSearchParams(
+          hashQueryIndex >= 0 ? window.location.hash.slice(hashQueryIndex + 1) : ''
+        );
+        const urlSheetId = urlParams.get('sheetId') || hashParams.get('sheetId');
         const pointer = await getCentralSheetPointer();
         setSharedWithAnyone(Boolean(pointer.sharedWithAnyone));
 
@@ -421,7 +610,20 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           await loadDatabaseById(targetId, authUser);
         }
       } catch (err) {
-        setSheetError(err instanceof Error ? err.message : 'Google Sheet तपासताना त्रुटी आली.');
+        const msg = err instanceof Error ? err.message : 'प्रणाली डेटा तपासताना त्रुटी आली.';
+        const lower = msg.toLowerCase();
+        if (
+          lower.includes('invalid_token') ||
+          lower.includes('unauthenticated') ||
+          lower.includes('invalid authentication') ||
+          msg.includes('401')
+        ) {
+          clearInMemoryAccessToken();
+          setNeedsAuth(true);
+          setSheetError('');
+        } else {
+          setSheetError(msg);
+        }
       } finally {
         setSheetLoading(false);
       }
@@ -448,9 +650,9 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return unsub;
   }, [bootstrapAfterSignIn]);
 
-  const signIn = async () => {
+  const signIn: SheetDataContextValue['signIn'] = async (options) => {
     setSheetError('');
-    const res = await signInWithGoogleWorkspace();
+    const res = await signInWithGoogleWorkspace(options);
     setFbUser(res.user);
     setNeedsAuth(false);
     await bootstrapAfterSignIn(res.user);
@@ -467,16 +669,16 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const hasRole = (roles: UserRole[]) => Boolean(currentUser && roles.includes(currentUser.role));
 
   const connectSheet = async (urlOrId: string) => {
-    if (!fbUser) throw new Error('कृपया आधी Sign in with Google करा.');
+    if (!fbUser) throw new Error('कृपया आधी लॉगिन करा.');
     const spreadsheetId = extractSpreadsheetIdFromInput(urlOrId);
-    if (!spreadsheetId) throw new Error('कृपया वैध Google Sheet ID किंवा लिंक प्रविष्ट करा.');
+    if (!spreadsheetId) throw new Error('कृपया वैध डेटाबेस आयडी प्रविष्ट करा.');
     await loadDatabaseById(spreadsheetId, fbUser);
   };
 
   const createNewSheet = async (title: string = DEFAULT_SPREADSHEET_TITLE) => {
-    if (!fbUser) throw new Error('कृपया आधी Sign in with Google करा.');
+    if (!fbUser) throw new Error('कृपया आधी लॉगिन करा.');
     if ((fbUser.email || '').toLowerCase() !== CENTRAL_OWNER_EMAIL) {
-      throw new Error(`नवीन मुख्य Google Sheet केवळ ${CENTRAL_OWNER_EMAIL} तयार करू शकतात.`);
+      throw new Error('प्रणाली डेटाबेस केवळ मुख्य प्रशासक तयार करू शकतात.');
     }
     setSheetLoading(true);
     setSheetError('');
@@ -491,7 +693,7 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setSharedWithAnyone(false);
       await loadDatabaseById(created.id, fbUser);
     } catch (err) {
-      setSheetError(err instanceof Error ? err.message : 'नवीन Google Sheet तयार करताना त्रुटी आली.');
+      setSheetError(err instanceof Error ? err.message : 'प्रणाली डेटाबेस तयार करताना त्रुटी आली.');
       throw err;
     } finally {
       setSheetLoading(false);
@@ -502,7 +704,9 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     await withSync(async () => {
       const { activeDb } = requireDbAndUser();
       await shareSpreadsheetWithAnyoneWriter(activeDb.spreadsheetId);
-      await registerCentralSheetPointer(activeDb.spreadsheetId, activeDb.spreadsheetUrl, true);
+      await registerCentralSheetPointer(activeDb.spreadsheetId, activeDb.spreadsheetUrl, true).catch(
+        () => undefined
+      );
       setSharedWithAnyone(true);
     });
   };
@@ -518,7 +722,7 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   const requireDbAndUser = () => {
-    if (!db) throw new Error('कोणतेही Google Sheet जोडलेले नाही.');
+    if (!db) throw new Error('प्रणाली डेटाबेस लोड झालेला नाही.');
     if (!currentUser) throw new Error('वापरकर्ता अधिकृत नाही.');
     return { activeDb: db, activeUser: currentUser };
   };
@@ -526,7 +730,7 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const withSync = async <T,>(fn: () => Promise<T>): Promise<T> => {
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       setSyncStatus('OFFLINE');
-      const offlineMsg = 'इंटरनेट कनेक्शन उपलब्ध नाही. डेटा Google Sheet मध्ये जतन झालेला नाही.';
+      const offlineMsg = 'इंटरनेट कनेक्शन उपलब्ध नाही. डेटा जतन झालेला नाही.';
       setSheetError(offlineMsg);
       throw new Error(offlineMsg);
     }
@@ -540,8 +744,14 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       return result;
     } catch (err) {
       setSyncStatus(typeof navigator !== 'undefined' && !navigator.onLine ? 'OFFLINE' : 'FAILED');
-      const msg = err instanceof Error ? err.message : 'Google Sheet अद्यतनित करताना त्रुटी आली.';
-      if (msg.toLowerCase().includes('invalid_token') || msg.includes('401')) {
+      const msg = err instanceof Error ? err.message : 'डेटा अद्यतनित करताना त्रुटी आली.';
+      const lower = msg.toLowerCase();
+      if (
+        lower.includes('invalid_token') ||
+        lower.includes('unauthenticated') ||
+        lower.includes('invalid authentication') ||
+        msg.includes('401')
+      ) {
         clearInMemoryAccessToken();
         setNeedsAuth(true);
       }
@@ -552,13 +762,26 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   };
 
-  const assertSessionEditableOnServer = async (session: VaccinationSession): Promise<void> => {
-    if (session.status === 'रद्द') {
+  const assertSessionEditableOnServer = async (
+    session: VaccinationSession,
+    activeDb?: SheetDatabase
+  ): Promise<void> => {
+    const liveSession =
+      activeDb?.vaccinationSessions.find((s) => s.id === session.id) || session;
+    if (liveSession.status === 'पूर्ण') {
+      throw new Error(
+        'हे लसीकरण सत्र पूर्ण (बंद) झालेले असल्यामुळे यापुढे डेटा एन्ट्री करता येणार नाही.'
+      );
+    }
+    if (liveSession.status === 'लॉक') {
+      throw new Error('हे लसीकरण सत्र लॉक असल्यामुळे यापुढे डेटा एन्ट्री करता येणार नाही.');
+    }
+    if (liveSession.status === 'रद्द') {
       throw new Error('हे लसीकरण सत्र रद्द केलेले असल्यामुळे त्यात बदल करता येणार नाही.');
     }
     const serverNowMs = new Date(await fetchServerNowISO()).getTime();
-    const deadlineMs = new Date(session.editDeadlineAt).getTime();
-    const reopenedMs = session.reopenedUntil ? new Date(session.reopenedUntil).getTime() : 0;
+    const deadlineMs = new Date(liveSession.editDeadlineAt).getTime();
+    const reopenedMs = liveSession.reopenedUntil ? new Date(liveSession.reopenedUntil).getTime() : 0;
     const withinWindow =
       (Number.isFinite(deadlineMs) && serverNowMs <= deadlineMs) ||
       (reopenedMs > 0 && serverNowMs <= reopenedMs);
@@ -933,6 +1156,13 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       if (bType === 'PREGNANT_WOMAN' && initialEpisode) {
         const episodeCode = buildNextEpisodeCode(activeDb.pregnancyEpisodes);
         const edd = initialEpisode.eddDate || calculateEddFromMcDate(initialEpisode.mcDate);
+        const gSummary = formatGravidaSummary({
+          gravida: initialEpisode.gravida,
+          para: initialEpisode.para,
+          abortions: initialEpisode.abortions,
+          livingChildren: initialEpisode.livingChildren,
+          fallbackText: initialEpisode.gravidaPara?.trim() || '',
+        });
         createdEpisode = {
           id: generateId('prg'),
           episodeCode,
@@ -946,7 +1176,20 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           pregnancyRegistrationDate:
             initialEpisode.pregnancyRegistrationDate || item.registrationDate,
           pregnancyStatus: initialEpisode.pregnancyStatus || 'सक्रिय',
-          gravidaPara: initialEpisode.gravidaPara?.trim() || '',
+          gravidaPara: gSummary !== '-' ? gSummary : initialEpisode.gravidaPara?.trim() || '',
+          gravida: initialEpisode.gravida ?? null,
+          para: initialEpisode.para ?? null,
+          abortions: initialEpisode.abortions ?? null,
+          livingChildren: initialEpisode.livingChildren ?? null,
+          previousPregnancyHistory: initialEpisode.previousPregnancyHistory?.trim() || '',
+          previousCaesarean: initialEpisode.previousCaesarean || '',
+          previousComplications: initialEpisode.previousComplications?.trim() || '',
+          bloodGroup: initialEpisode.bloodGroup || item.bloodGroup || '',
+          rhFactor: initialEpisode.rhFactor || item.rhFactor || '',
+          eddHistoryJson: '[]',
+          isHighRisk: false,
+          highRiskReasonsJson: '[]',
+          currentHrpStatus: 'Normal',
           outcomeDate: '',
           notes: initialEpisode.notes?.trim() || '',
           createdBy: activeUser.email,
@@ -1002,7 +1245,7 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     async (session, data, initialEpisode) => {
       return await withSync(async () => {
         const { activeDb, activeUser } = requireDbAndUser();
-        await assertSessionEditableOnServer(session);
+        await assertSessionEditableOnServer(session, activeDb);
 
         const bType = data.beneficiaryType || 'CHILD';
         const cleanAadhaar = sanitizeOptionalAadhaar(data.aadhaarNumber);
@@ -1031,6 +1274,13 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         if (bType === 'PREGNANT_WOMAN' && initialEpisode) {
           const episodeCode = buildNextEpisodeCode(activeDb.pregnancyEpisodes);
           const edd = initialEpisode.eddDate || calculateEddFromMcDate(initialEpisode.mcDate);
+          const gSummary = formatGravidaSummary({
+            gravida: initialEpisode.gravida,
+            para: initialEpisode.para,
+            abortions: initialEpisode.abortions,
+            livingChildren: initialEpisode.livingChildren,
+            fallbackText: initialEpisode.gravidaPara?.trim() || '',
+          });
           createdEpisode = {
             id: generateId('prg'),
             episodeCode,
@@ -1044,7 +1294,20 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             pregnancyRegistrationDate:
               initialEpisode.pregnancyRegistrationDate || beneficiaryItem.registrationDate,
             pregnancyStatus: initialEpisode.pregnancyStatus || 'सक्रिय',
-            gravidaPara: initialEpisode.gravidaPara?.trim() || '',
+            gravidaPara: gSummary !== '-' ? gSummary : initialEpisode.gravidaPara?.trim() || '',
+            gravida: initialEpisode.gravida ?? null,
+            para: initialEpisode.para ?? null,
+            abortions: initialEpisode.abortions ?? null,
+            livingChildren: initialEpisode.livingChildren ?? null,
+            previousPregnancyHistory: initialEpisode.previousPregnancyHistory?.trim() || '',
+            previousCaesarean: initialEpisode.previousCaesarean || '',
+            previousComplications: initialEpisode.previousComplications?.trim() || '',
+            bloodGroup: initialEpisode.bloodGroup || beneficiaryItem.bloodGroup || '',
+            rhFactor: initialEpisode.rhFactor || beneficiaryItem.rhFactor || '',
+            eddHistoryJson: '[]',
+            isHighRisk: false,
+            highRiskReasonsJson: '[]',
+            currentHrpStatus: 'Normal',
             outcomeDate: '',
             notes: initialEpisode.notes?.trim() || '',
             createdBy: activeUser.email,
@@ -1230,6 +1493,13 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const ts = nowISO();
       const episodeCode = buildNextEpisodeCode(activeDb.pregnancyEpisodes);
       const eddDate = episodeData.eddDate || calculateEddFromMcDate(episodeData.mcDate);
+      const gSummary = formatGravidaSummary({
+        gravida: episodeData.gravida,
+        para: episodeData.para,
+        abortions: episodeData.abortions,
+        livingChildren: episodeData.livingChildren,
+        fallbackText: episodeData.gravidaPara?.trim() || '',
+      });
       const item: PregnancyEpisode = {
         id: generateId('prg'),
         episodeCode,
@@ -1242,7 +1512,20 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         hospitalName: episodeData.hospitalName.trim(),
         pregnancyRegistrationDate: episodeData.pregnancyRegistrationDate || getTodayIST(),
         pregnancyStatus: episodeData.pregnancyStatus || 'सक्रिय',
-        gravidaPara: episodeData.gravidaPara?.trim() || '',
+        gravidaPara: gSummary !== '-' ? gSummary : episodeData.gravidaPara?.trim() || '',
+        gravida: episodeData.gravida ?? null,
+        para: episodeData.para ?? null,
+        abortions: episodeData.abortions ?? null,
+        livingChildren: episodeData.livingChildren ?? null,
+        previousPregnancyHistory: episodeData.previousPregnancyHistory?.trim() || '',
+        previousCaesarean: episodeData.previousCaesarean || '',
+        previousComplications: episodeData.previousComplications?.trim() || '',
+        bloodGroup: episodeData.bloodGroup || beneficiary.bloodGroup || '',
+        rhFactor: episodeData.rhFactor || beneficiary.rhFactor || '',
+        eddHistoryJson: '[]',
+        isHighRisk: false,
+        highRiskReasonsJson: '[]',
+        currentHrpStatus: 'Normal',
         outcomeDate: '',
         notes: episodeData.notes?.trim() || '',
         createdBy: activeUser.email,
@@ -1284,7 +1567,8 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const updatePregnancyEpisode: SheetDataContextValue['updatePregnancyEpisode'] = async (
     episodeId,
-    updates
+    updates,
+    eddChangeReason
   ) => {
     await withSync(async () => {
       const { activeDb, activeUser } = requireDbAndUser();
@@ -1296,11 +1580,36 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         (updates.mcDate && updates.mcDate !== existing.mcDate
           ? calculateEddFromMcDate(nextMc)
           : existing.eddDate);
+
+      let eddHistoryJson = existing.eddHistoryJson || '[]';
+      if (existing.eddDate && nextEdd && nextEdd !== existing.eddDate) {
+        const hist = parseJsonArraySafe<EddHistoryEntry>(existing.eddHistoryJson);
+        hist.push({
+          previousEddDate: existing.eddDate,
+          newEddDate: nextEdd,
+          changedAt: nowISO(),
+          changedBy: activeUser.name || activeUser.email,
+          reason: eddChangeReason || 'तपासणीनुसार अद्यतनित',
+        });
+        eddHistoryJson = JSON.stringify(hist);
+      }
+
+      const gSummary = formatGravidaSummary({
+        gravida: updates.gravida !== undefined ? updates.gravida : existing.gravida,
+        para: updates.para !== undefined ? updates.para : existing.para,
+        abortions: updates.abortions !== undefined ? updates.abortions : existing.abortions,
+        livingChildren:
+          updates.livingChildren !== undefined ? updates.livingChildren : existing.livingChildren,
+        fallbackText: updates.gravidaPara ?? existing.gravidaPara ?? '',
+      });
+
       const updated: PregnancyEpisode = {
         ...existing,
         ...updates,
         mcDate: nextMc,
         eddDate: nextEdd,
+        eddHistoryJson: updates.eddHistoryJson ?? eddHistoryJson,
+        gravidaPara: gSummary !== '-' ? gSummary : updates.gravidaPara ?? existing.gravidaPara,
         updatedAt: nowISO(),
       };
       const nextList = activeDb.pregnancyEpisodes.map((e) => (e.id === episodeId ? updated : e));
@@ -1397,7 +1706,7 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const existing = activeDb.vaccinationSessions.find((s) => s.id === sessionId);
       if (!existing) throw new Error('सत्र आढळले नाही.');
       if (activeUser.role !== 'ADMIN') {
-        await assertSessionEditableOnServer(existing);
+        await assertSessionEditableOnServer(existing, activeDb);
       }
 
       const editDays = activeDb.systemSettings[0]?.allowEditDaysAfterSession ?? 2;
@@ -1446,13 +1755,14 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const existing = activeDb.vaccinationSessions.find((s) => s.id === sessionId);
       if (!existing) throw new Error('सत्र आढळले नाही.');
       if (activeUser.role !== 'ADMIN') {
-        await assertSessionEditableOnServer(existing);
+        await assertSessionEditableOnServer(existing, activeDb);
       }
 
       const completedAt = await fetchServerNowISO();
       const updated: VaccinationSession = {
         ...existing,
         status: 'पूर्ण',
+        reopenedUntil: null,
         completedAt,
         completedBy: activeUser.email,
         updatedAt: completedAt,
@@ -1543,7 +1853,7 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   ) => {
     await withSync(async () => {
       const { activeDb, activeUser } = requireDbAndUser();
-      await assertSessionEditableOnServer(session);
+      await assertSessionEditableOnServer(session, activeDb);
       const docId = `${session.id}_${beneficiary.id}`;
       if (activeDb.sessionBeneficiaries.some((sb) => sb.id === docId)) {
         throw new Error('हा लाभार्थी या सत्रात आधीच समाविष्ट आहे.');
@@ -1609,7 +1919,7 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   ) => {
     await withSync(async () => {
       const { activeDb, activeUser } = requireDbAndUser();
-      await assertSessionEditableOnServer(session);
+      await assertSessionEditableOnServer(session, activeDb);
       const target = activeDb.sessionBeneficiaries.find((sb) => sb.id === sbId);
       if (!target) return;
       const nextList = activeDb.sessionBeneficiaries.filter((sb) => sb.id !== sbId);
@@ -1762,7 +2072,7 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       }
 
       const audit = buildAuditEntry(activeUser, {
-        action: 'राष्ट्रीय लसीकरण वेळापत्रक (NIS) Google Sheet मध्ये भरले',
+        action: 'राष्ट्रीय लसीकरण वेळापत्रक (NIS) प्रणालीत भरले',
         entityType: 'VACCINE_SCHEDULE',
         recordId: 'nis_seed',
         newValue: { addedVaccines: newMasters.length, addedDoses: newSchedules.length },
@@ -1827,7 +2137,7 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (entries.length === 0) return;
     await withSync(async () => {
       const { activeDb, activeUser } = requireDbAndUser();
-      await assertSessionEditableOnServer(session);
+      await assertSessionEditableOnServer(session, activeDb);
       const ts = nowISO();
       const existingIds = new Set(activeDb.vaccinationRecords.map((r) => r.id));
 
@@ -1911,7 +2221,7 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (entries.length === 0) return;
     await withSync(async () => {
       const { activeDb, activeUser } = requireDbAndUser();
-      await assertSessionEditableOnServer(session);
+      await assertSessionEditableOnServer(session, activeDb);
       const ts = nowISO();
 
       const newRecords: MaternalServiceRecord[] = [];
@@ -1919,7 +2229,9 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
       for (const item of entries) {
         const visitDate = item.visitDate || session.sessionDate;
-        const recId = `${session.id}_${item.beneficiary.id}_${item.episode.id}_${item.serviceCode}_${Date.now()}_${Math.random()
+        const epId = item.episode?.id || '';
+        const epCode = item.episode?.episodeCode || 'VITALS';
+        const recId = `${session.id}_${item.beneficiary.id}_${epId || 'vitals'}_${item.serviceCode}_${Date.now()}_${Math.random()
           .toString(36)
           .slice(2, 5)}`;
 
@@ -1929,8 +2241,8 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           sessionDate: session.sessionDate,
           beneficiaryId: item.beneficiary.id,
           beneficiaryCode: item.beneficiary.beneficiaryCode,
-          pregnancyEpisodeId: item.episode.id,
-          episodeCode: item.episode.episodeCode,
+          pregnancyEpisodeId: epId,
+          episodeCode: epCode,
           subcentreId: session.subcentreId,
           villageId: session.villageId,
           visitDate,
@@ -1947,12 +2259,12 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         newRecords.push(rec);
         newAudits.push(
           buildAuditEntry(activeUser, {
-            action: 'गरोदर माता ANC सेवा नोंदवली',
+            action: item.episode ? 'गरोदर माता ANC सेवा नोंदवली' : 'लाभार्थी वाढ व तपासणी नोंदवली',
             entityType: 'MATERNAL_SERVICE',
             recordId: recId,
             newValue: {
               beneficiaryCode: item.beneficiary.beneficiaryCode,
-              episodeCode: item.episode.episodeCode,
+              episodeCode: epCode,
               serviceCode: item.serviceCode,
               serviceName: item.serviceName,
               serviceValue: rec.serviceValue,
@@ -1994,6 +2306,36 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const { activeDb, activeUser } = requireDbAndUser();
       const ts = nowISO();
       const existing = data.id ? activeDb.riChecklists.find((c) => c.id === data.id) : undefined;
+      const targetSessionId = (data.sessionId || '').trim();
+      if (targetSessionId) {
+        const linkedSession = activeDb.vaccinationSessions.find((s) => s.id === targetSessionId);
+        if (linkedSession) {
+          await assertSessionEditableOnServer(linkedSession, activeDb);
+        }
+        const sessionDuplicate = activeDb.riChecklists.find(
+          (c) => c.sessionId === targetSessionId && c.id !== existing?.id
+        );
+        if (sessionDuplicate) {
+          throw new Error(
+            `या लसीकरण सत्रासाठी (${sessionDuplicate.sessionCode || data.sessionCode || targetSessionId}) आधीच RI चेकलिस्ट (${sessionDuplicate.checklistCode}) भरलेली आहे. एका लसीकरण सत्रासाठी फक्त एकच चेकलिस्ट भरण्याची परवानगी आहे.`
+          );
+        }
+      } else {
+        const normalizedSite = (data.sessionSiteName || '').trim().toLowerCase();
+        const siteDuplicate = activeDb.riChecklists.find(
+          (c) =>
+            !c.sessionId &&
+            c.monitoringDate === data.monitoringDate &&
+            c.subcentreId === data.subcentreId &&
+            (c.sessionSiteName || '').trim().toLowerCase() === normalizedSite &&
+            c.id !== existing?.id
+        );
+        if (siteDuplicate) {
+          throw new Error(
+            `या दिनांक व सत्र ठिकाणासाठी (${siteDuplicate.sessionSiteName}) आधीच RI चेकलिस्ट (${siteDuplicate.checklistCode}) भरलेली आहे. एका सत्रासाठी फक्त एकच चेकलिस्ट भरता येते.`
+          );
+        }
+      }
       let checklistCode = existing?.checklistCode || '';
       if (!checklistCode) {
         const dateCompact = (data.monitoringDate || getTodayIST()).replace(/-/g, '');
@@ -2135,6 +2477,1121 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     });
   };
 
+  // ==================== EXPANDED MATERNAL LIFECYCLE MUTATIONS ====================
+
+  const recordAncVisit: SheetDataContextValue['recordAncVisit'] = async (data) => {
+    let saved!: AncVisitRecord;
+    await withSync(async () => {
+      const { activeDb, activeUser } = requireDbAndUser();
+      const ts = nowISO();
+      const ga = calculateGestationalWeeksAndDays(data.episode.mcDate, data.visitDate);
+      const { systolic, diastolic } = parseBpSystolicDiastolic(data.bp);
+      const rec: AncVisitRecord = {
+        id: generateId('anc'),
+        visitNumber: data.visitNumber,
+        visitLabel:
+          data.visitLabel || (data.visitNumber <= 4 ? `ANC-${data.visitNumber}` : `Extra ANC-${data.visitNumber}`),
+        beneficiaryId: data.beneficiary.id,
+        beneficiaryCode: data.beneficiary.beneficiaryCode,
+        pregnancyEpisodeId: data.episode.id,
+        episodeCode: data.episode.episodeCode,
+        sessionId: data.sessionId || '',
+        subcentreId: data.beneficiary.subcentreId,
+        subcentreName: data.beneficiary.subcentreName,
+        villageId: data.beneficiary.villageId,
+        villageName: data.beneficiary.villageName,
+        visitDate: data.visitDate,
+        gestationalWeeks: ga.weeks,
+        gestationalDays: ga.days,
+        gestationalAgeText: ga.label,
+        weightKg: data.weightKg?.trim() || '',
+        heightCm: data.heightCm?.trim() || '',
+        bp: data.bp?.trim() || '',
+        bpSystolic: systolic,
+        bpDiastolic: diastolic,
+        hb: data.hb?.trim() || '',
+        bloodSugar: data.bloodSugar?.trim() || '',
+        urineAlbumin: data.urineAlbumin?.trim() || '',
+        urineSugar: data.urineSugar?.trim() || '',
+        bloodTests: data.bloodTests?.trim() || '',
+        otherTests: data.otherTests?.trim() || '',
+        doctorObservation: data.doctorObservation?.trim() || '',
+        treatmentAdvice: data.treatmentAdvice?.trim() || '',
+        nextVisitDate: data.nextVisitDate || '',
+        staffId: activeUser.id,
+        staffName: data.staffName.trim() || activeUser.name,
+        staffDesignation: data.staffDesignation || activeUser.role,
+        remarks: data.remarks?.trim() || '',
+        createdBy: activeUser.email,
+        createdAt: ts,
+        updatedAt: ts,
+      };
+      saved = rec;
+
+      const audit = buildAuditEntry(activeUser, {
+        action: `${rec.visitLabel} तपासणी नोंदवली (${data.beneficiary.childName})`,
+        entityType: 'ANC_VISIT',
+        recordId: rec.id,
+        newValue: {
+          visitLabel: rec.visitLabel,
+          visitDate: rec.visitDate,
+          episodeCode: rec.episodeCode,
+          weightKg: rec.weightKg,
+          bp: rec.bp,
+          hb: rec.hb,
+        },
+      });
+
+      await appendSheetRows(activeDb.spreadsheetId, 'ancVisits', [
+        rec as unknown as Record<string, unknown>,
+      ]);
+      await appendSheetRows(activeDb.spreadsheetId, 'auditLogs', [
+        audit as unknown as Record<string, unknown>,
+      ]);
+      setDb((prev) =>
+        prev
+          ? {
+              ...prev,
+              ancVisits: [...prev.ancVisits, rec].sort(
+                (a, b) => a.visitDate.localeCompare(b.visitDate) || a.visitNumber - b.visitNumber
+              ),
+              auditLogs: [audit, ...prev.auditLogs],
+            }
+          : prev
+      );
+    });
+    return saved;
+  };
+
+  const saveHighRiskRecord: SheetDataContextValue['saveHighRiskRecord'] = async (data) => {
+    let saved!: HighRiskRecord;
+    await withSync(async () => {
+      const { activeDb, activeUser } = requireDbAndUser();
+      const ts = nowISO();
+      const existing = activeDb.highRiskRecords.find(
+        (h) => h.pregnancyEpisodeId === data.episode.id
+      );
+      const prevHist = parseJsonArraySafe<HrpHistoryEntry>(existing?.statusHistoryJson);
+      const nextHist: HrpHistoryEntry[] = [
+        ...prevHist,
+        {
+          status: data.isHighRisk,
+          reasons: data.reasons,
+          otherReasonText: data.otherReasonText?.trim() || '',
+          currentStatus: data.currentStatus || (data.isHighRisk === 'YES' ? 'निरीक्षणाखाली' : 'सामान्य'),
+          changedAt: ts,
+          changedBy: activeUser.name || activeUser.email,
+          note: data.note?.trim() || '',
+        },
+      ];
+
+      const rec: HighRiskRecord = {
+        id: existing ? existing.id : generateId('hrp'),
+        beneficiaryId: data.beneficiary.id,
+        beneficiaryCode: data.beneficiary.beneficiaryCode,
+        pregnancyEpisodeId: data.episode.id,
+        episodeCode: data.episode.episodeCode,
+        isHighRisk: data.isHighRisk,
+        identificationDate:
+          data.isHighRisk === 'YES' ? data.identificationDate || getTodayIST() : '',
+        reasonsJson: JSON.stringify(data.reasons),
+        otherReasonText: data.otherReasonText?.trim() || '',
+        doctorAdvice: data.doctorAdvice?.trim() || '',
+        treatmentInfo: data.treatmentInfo?.trim() || '',
+        referralRequired: data.referralRequired || '',
+        referralDate: data.referralDate || '',
+        referralHospital: data.referralHospital?.trim() || '',
+        referralReason: data.referralReason?.trim() || '',
+        followUpDate: data.followUpDate || '',
+        followUpStatus: data.followUpStatus?.trim() || '',
+        currentStatus:
+          data.currentStatus?.trim() || (data.isHighRisk === 'YES' ? 'निरीक्षणाखाली' : 'सामान्य'),
+        statusHistoryJson: JSON.stringify(nextHist),
+        approvedByMO: data.approvedByMO?.trim() || existing?.approvedByMO || '',
+        createdBy: existing ? existing.createdBy : activeUser.email,
+        createdAt: existing ? existing.createdAt : ts,
+        updatedAt: ts,
+      };
+      saved = rec;
+
+      const nextHrps = existing
+        ? activeDb.highRiskRecords.map((h) => (h.id === existing.id ? rec : h))
+        : [rec, ...activeDb.highRiskRecords];
+
+      const updatedEpisodes = activeDb.pregnancyEpisodes.map((ep) =>
+        ep.id === data.episode.id
+          ? {
+              ...ep,
+              isHighRisk: data.isHighRisk === 'YES',
+              highRiskReasonsJson: rec.reasonsJson,
+              currentHrpStatus: rec.currentStatus || '',
+              updatedAt: ts,
+            }
+          : ep
+      );
+
+      const audit = buildAuditEntry(activeUser, {
+        action: `High Risk Pregnancy स्थिती अद्यतनित (${data.isHighRisk})`,
+        entityType: 'HIGH_RISK',
+        recordId: rec.id,
+        previousValue: existing
+          ? { isHighRisk: existing.isHighRisk, currentStatus: existing.currentStatus }
+          : null,
+        newValue: {
+          episodeCode: rec.episodeCode,
+          isHighRisk: rec.isHighRisk,
+          reasons: data.reasons,
+          currentStatus: rec.currentStatus,
+        },
+      });
+
+      if (existing) {
+        await rewriteSheetTab(
+          activeDb.spreadsheetId,
+          'highRiskRecords',
+          nextHrps as unknown as Record<string, unknown>[]
+        );
+      } else {
+        await appendSheetRows(activeDb.spreadsheetId, 'highRiskRecords', [
+          rec as unknown as Record<string, unknown>,
+        ]);
+      }
+      await rewriteSheetTab(
+        activeDb.spreadsheetId,
+        'pregnancyEpisodes',
+        updatedEpisodes as unknown as Record<string, unknown>[]
+      );
+      await appendSheetRows(activeDb.spreadsheetId, 'auditLogs', [
+        audit as unknown as Record<string, unknown>,
+      ]);
+
+      setDb((prev) =>
+        prev
+          ? {
+              ...prev,
+              highRiskRecords: nextHrps,
+              pregnancyEpisodes: updatedEpisodes,
+              auditLogs: [audit, ...prev.auditLogs],
+            }
+          : prev
+      );
+    });
+    return saved;
+  };
+
+  const recordMaternalImmunizationAndSupplements: SheetDataContextValue['recordMaternalImmunizationAndSupplements'] =
+    async (data) => {
+      if (data.items.length === 0) return [];
+      const created: MaternalServiceRecord[] = [];
+      await withSync(async () => {
+        const { activeDb, activeUser } = requireDbAndUser();
+        const ts = nowISO();
+        const benExisting = activeDb.maternalServiceRecords.filter(
+          (r) => r.beneficiaryId === data.beneficiary.id
+        );
+
+        const newRecords: MaternalServiceRecord[] = [];
+        const newAudits: AuditLog[] = [];
+
+        for (const item of data.items) {
+          if (
+            item.serviceCode === 'TD_1' ||
+            item.serviceCode === 'TD_2' ||
+            item.serviceCode === 'TD_BOOSTER'
+          ) {
+            const check = validateTdDoseForEpisode({
+              existingRecords: [...benExisting, ...newRecords],
+              episodeId: data.episode.id,
+              serviceCode: item.serviceCode,
+              visitDate: data.visitDate,
+            });
+            if (!check.ok) {
+              throw new Error(check.error);
+            }
+          }
+
+          const recId = `mat_${data.beneficiary.id}_${data.episode.id}_${item.serviceCode}_${Date.now()}_${Math.random()
+            .toString(36)
+            .slice(2, 5)}`;
+          const rec: MaternalServiceRecord = {
+            id: recId,
+            sessionId: '',
+            sessionDate: data.visitDate,
+            beneficiaryId: data.beneficiary.id,
+            beneficiaryCode: data.beneficiary.beneficiaryCode,
+            pregnancyEpisodeId: data.episode.id,
+            episodeCode: data.episode.episodeCode,
+            subcentreId: data.beneficiary.subcentreId,
+            villageId: data.beneficiary.villageId,
+            visitDate: data.visitDate,
+            serviceCode: item.serviceCode,
+            serviceName: item.serviceName,
+            serviceValue: item.serviceValue.trim() || 'दिले',
+            batchNumber: item.batchNumber?.trim() || '',
+            staffId: activeUser.id,
+            staffName: data.staffName.trim() || activeUser.name,
+            remarks: item.remarks?.trim() || '',
+            createdAt: ts,
+            updatedAt: ts,
+          };
+          newRecords.push(rec);
+          created.push(rec);
+          newAudits.push(
+            buildAuditEntry(activeUser, {
+              action: `माता लसीकरण / औषध वितरण नोंदवले (${item.serviceName})`,
+              entityType: 'MATERNAL_SERVICE',
+              recordId: recId,
+              newValue: {
+                beneficiaryCode: rec.beneficiaryCode,
+                episodeCode: rec.episodeCode,
+                serviceCode: rec.serviceCode,
+                serviceValue: rec.serviceValue,
+                visitDate: rec.visitDate,
+              },
+            })
+          );
+        }
+
+        await appendSheetRows(
+          activeDb.spreadsheetId,
+          'maternalServiceRecords',
+          newRecords as unknown as Record<string, unknown>[]
+        );
+        await appendSheetRows(
+          activeDb.spreadsheetId,
+          'auditLogs',
+          newAudits as unknown as Record<string, unknown>[]
+        );
+
+        setDb((prev) =>
+          prev
+            ? {
+                ...prev,
+                maternalServiceRecords: [...prev.maternalServiceRecords, ...newRecords].sort((a, b) =>
+                  a.visitDate.localeCompare(b.visitDate)
+                ),
+                auditLogs: [...newAudits, ...prev.auditLogs],
+              }
+            : prev
+        );
+      });
+      return created;
+    };
+
+  const recordMaternalReferral: SheetDataContextValue['recordMaternalReferral'] = async (data) => {
+    let saved!: MaternalReferralRecord;
+    await withSync(async () => {
+      const { activeDb, activeUser } = requireDbAndUser();
+      const ts = nowISO();
+      const rec: MaternalReferralRecord = {
+        id: generateId('ref'),
+        beneficiaryId: data.beneficiary.id,
+        beneficiaryCode: data.beneficiary.beneficiaryCode,
+        pregnancyEpisodeId: data.episode.id,
+        episodeCode: data.episode.episodeCode,
+        highRiskRecordId: data.highRiskRecordId || '',
+        referralDate: data.referralDate,
+        referredFrom: data.referredFrom.trim() || data.beneficiary.subcentreName,
+        referredToHospital: data.referredToHospital.trim(),
+        referralReason: data.referralReason.trim(),
+        transportArrangement: data.transportArrangement?.trim() || '',
+        followUpDate: data.followUpDate || '',
+        followUpStatus: data.followUpStatus || 'प्रलंबित',
+        outcomeNotes: data.outcomeNotes?.trim() || '',
+        referredByStaff: data.referredByStaff.trim() || activeUser.name,
+        createdBy: activeUser.email,
+        createdAt: ts,
+        updatedAt: ts,
+      };
+      saved = rec;
+
+      const audit = buildAuditEntry(activeUser, {
+        action: `गरोदर माता संदर्भ नोंदवले (${rec.referredToHospital})`,
+        entityType: 'REFERRAL',
+        recordId: rec.id,
+        newValue: {
+          episodeCode: rec.episodeCode,
+          referredToHospital: rec.referredToHospital,
+          referralDate: rec.referralDate,
+          referralReason: rec.referralReason,
+        },
+      });
+
+      await appendSheetRows(activeDb.spreadsheetId, 'maternalReferrals', [
+        rec as unknown as Record<string, unknown>,
+      ]);
+      await appendSheetRows(activeDb.spreadsheetId, 'auditLogs', [
+        audit as unknown as Record<string, unknown>,
+      ]);
+      setDb((prev) =>
+        prev
+          ? {
+              ...prev,
+              maternalReferrals: [rec, ...prev.maternalReferrals],
+              auditLogs: [audit, ...prev.auditLogs],
+            }
+          : prev
+      );
+    });
+    return saved;
+  };
+
+  const updateMaternalReferralStatus: SheetDataContextValue['updateMaternalReferralStatus'] = async (
+    referralId,
+    updates
+  ) => {
+    await withSync(async () => {
+      const { activeDb, activeUser } = requireDbAndUser();
+      const existing = activeDb.maternalReferrals.find((r) => r.id === referralId);
+      if (!existing) throw new Error('संदर्भ नोंद आढळली नाही.');
+      const nextList = activeDb.maternalReferrals.map((r) =>
+        r.id === referralId ? { ...r, ...updates, updatedAt: nowISO() } : r
+      );
+      const audit = buildAuditEntry(activeUser, {
+        action: `संदर्भ पाठपुरावा स्थिती अद्यतनित (${updates.followUpStatus || existing.followUpStatus})`,
+        entityType: 'REFERRAL',
+        recordId: referralId,
+        newValue: updates as Record<string, unknown>,
+      });
+      await rewriteSheetTab(
+        activeDb.spreadsheetId,
+        'maternalReferrals',
+        nextList as unknown as Record<string, unknown>[]
+      );
+      await appendSheetRows(activeDb.spreadsheetId, 'auditLogs', [
+        audit as unknown as Record<string, unknown>,
+      ]);
+      setDb((prev) =>
+        prev ? { ...prev, maternalReferrals: nextList, auditLogs: [audit, ...prev.auditLogs] } : prev
+      );
+    });
+  };
+
+  const recordDeliveryAndBabies: SheetDataContextValue['recordDeliveryAndBabies'] = async (data) => {
+    let result!: { delivery: DeliveryRecord; babies: BabyRecord[] };
+    await withSync(async () => {
+      const { activeDb, activeUser } = requireDbAndUser();
+      const ts = nowISO();
+      const existingDeliv = activeDb.deliveryRecords.find(
+        (d) => d.pregnancyEpisodeId === data.episode.id
+      );
+
+      const delivery: DeliveryRecord = {
+        id: existingDeliv ? existingDeliv.id : generateId('del'),
+        beneficiaryId: data.beneficiary.id,
+        beneficiaryCode: data.beneficiary.beneficiaryCode,
+        pregnancyEpisodeId: data.episode.id,
+        episodeCode: data.episode.episodeCode,
+        plannedEddDate: data.plannedEddDate || data.episode.eddDate,
+        plannedDeliveryPlace: data.plannedDeliveryPlace || data.episode.expectedDeliveryPlace,
+        plannedHospitalName: data.plannedHospitalName || data.episode.hospitalName,
+        deliveryPlanNotes: data.deliveryPlanNotes?.trim() || '',
+        referralRequiredBeforeDelivery: data.referralRequiredBeforeDelivery || '',
+        actualDeliveryDate: data.actualDeliveryDate,
+        actualDeliveryPlace: data.actualDeliveryPlace.trim(),
+        actualHospitalName: data.actualHospitalName?.trim() || '',
+        deliveryType: data.deliveryType,
+        deliveryTypeOther: data.deliveryTypeOther?.trim() || '',
+        numberOfBabies: data.babies.length,
+        motherCondition: data.motherCondition.trim(),
+        deliveryComplications: data.deliveryComplications?.trim() || '',
+        referralDetails: data.referralDetails?.trim() || '',
+        attendedByStaff: data.attendedByStaff.trim() || activeUser.name,
+        isCompleted: data.markEpisodeDelivered,
+        createdBy: existingDeliv ? existingDeliv.createdBy : activeUser.email,
+        createdAt: existingDeliv ? existingDeliv.createdAt : ts,
+        updatedAt: ts,
+      };
+
+      const year = (data.actualDeliveryDate || getTodayIST()).slice(0, 4);
+      const babyPrefix = `PHCB-BABY-${year}-`;
+      let maxBabySeq = activeDb.babyRecords.reduce((acc, b) => {
+        if (b.babyCode.startsWith(babyPrefix)) {
+          const n = parseInt(b.babyCode.slice(babyPrefix.length), 10);
+          return Number.isFinite(n) && n > acc ? n : acc;
+        }
+        return acc;
+      }, 0);
+
+      const newBabies: BabyRecord[] = data.babies.map((b, idx) => {
+        maxBabySeq += 1;
+        return {
+          id: generateId('baby'),
+          babyCode: `${babyPrefix}${String(maxBabySeq).padStart(4, '0')}`,
+          motherBeneficiaryId: data.beneficiary.id,
+          motherBeneficiaryCode: data.beneficiary.beneficiaryCode,
+          pregnancyEpisodeId: data.episode.id,
+          episodeCode: data.episode.episodeCode,
+          deliveryRecordId: delivery.id,
+          babyNumber: idx + 1,
+          babyName: b.babyName.trim() || `${data.beneficiary.childName} बाळ ${idx + 1}`,
+          gender: b.gender,
+          birthWeightGrams: b.birthWeightGrams,
+          birthOutcome: b.birthOutcome,
+          birthOutcomeOther: b.birthOutcomeOther?.trim() || '',
+          babyCondition: b.babyCondition.trim(),
+          dob: data.actualDeliveryDate,
+          notes: b.notes?.trim() || '',
+          createdBy: activeUser.email,
+          createdAt: ts,
+          updatedAt: ts,
+        };
+      });
+
+      const nextDeliveries = existingDeliv
+        ? activeDb.deliveryRecords.map((d) => (d.id === existingDeliv.id ? delivery : d))
+        : [delivery, ...activeDb.deliveryRecords];
+
+      const keptBabies = existingDeliv
+        ? activeDb.babyRecords.filter((b) => b.deliveryRecordId !== existingDeliv.id)
+        : activeDb.babyRecords;
+      const nextBabies = [...keptBabies, ...newBabies];
+
+      const nextEpisodes = activeDb.pregnancyEpisodes.map((ep) =>
+        ep.id === data.episode.id && data.markEpisodeDelivered
+          ? {
+              ...ep,
+              pregnancyStatus: 'प्रसूती पूर्ण' as PregnancyStatus,
+              outcomeDate: data.actualDeliveryDate,
+              updatedAt: ts,
+            }
+          : ep
+      );
+
+      const audit = buildAuditEntry(activeUser, {
+        action: `प्रसूती व ${newBabies.length} नवजात बाळ नोंदवले (${data.episode.episodeCode})`,
+        entityType: 'DELIVERY',
+        recordId: delivery.id,
+        newValue: {
+          episodeCode: data.episode.episodeCode,
+          actualDeliveryDate: delivery.actualDeliveryDate,
+          deliveryType: delivery.deliveryType,
+          numberOfBabies: delivery.numberOfBabies,
+          markEpisodeDelivered: data.markEpisodeDelivered,
+        },
+      });
+
+      if (existingDeliv) {
+        await rewriteSheetTab(
+          activeDb.spreadsheetId,
+          'deliveryRecords',
+          nextDeliveries as unknown as Record<string, unknown>[]
+        );
+        await rewriteSheetTab(
+          activeDb.spreadsheetId,
+          'babyRecords',
+          nextBabies as unknown as Record<string, unknown>[]
+        );
+      } else {
+        await appendSheetRows(activeDb.spreadsheetId, 'deliveryRecords', [
+          delivery as unknown as Record<string, unknown>,
+        ]);
+        if (newBabies.length > 0) {
+          await appendSheetRows(
+            activeDb.spreadsheetId,
+            'babyRecords',
+            newBabies as unknown as Record<string, unknown>[]
+          );
+        }
+      }
+
+      if (data.markEpisodeDelivered) {
+        await rewriteSheetTab(
+          activeDb.spreadsheetId,
+          'pregnancyEpisodes',
+          nextEpisodes as unknown as Record<string, unknown>[]
+        );
+      }
+      await appendSheetRows(activeDb.spreadsheetId, 'auditLogs', [
+        audit as unknown as Record<string, unknown>,
+      ]);
+
+      setDb((prev) =>
+        prev
+          ? {
+              ...prev,
+              deliveryRecords: nextDeliveries,
+              babyRecords: nextBabies,
+              pregnancyEpisodes: nextEpisodes,
+              auditLogs: [audit, ...prev.auditLogs],
+            }
+          : prev
+      );
+      result = { delivery, babies: newBabies };
+    });
+    return result;
+  };
+
+  const recordPncVisit: SheetDataContextValue['recordPncVisit'] = async (data) => {
+    let saved!: PncRecord;
+    await withSync(async () => {
+      const { activeDb, activeUser } = requireDbAndUser();
+      const ts = nowISO();
+      const rec: PncRecord = {
+        id: generateId('pnc'),
+        visitNumber: data.visitNumber,
+        visitLabel:
+          data.visitLabel || (data.visitNumber <= 2 ? `PNC-${data.visitNumber}` : `Extra PNC-${data.visitNumber}`),
+        beneficiaryId: data.beneficiary.id,
+        beneficiaryCode: data.beneficiary.beneficiaryCode,
+        pregnancyEpisodeId: data.episode.id,
+        episodeCode: data.episode.episodeCode,
+        deliveryRecordId: data.deliveryRecordId || '',
+        pncDate: data.pncDate,
+        motherBp: data.motherBp?.trim() || '',
+        motherHealthStatus: data.motherHealthStatus.trim(),
+        bleedingStatus: data.bleedingStatus.trim(),
+        breastfeedingStatus: data.breastfeedingStatus.trim(),
+        babyWeightGrams: data.babyWeightGrams ?? null,
+        babyHealthStatus: data.babyHealthStatus.trim(),
+        breastfeedingCounselling: data.breastfeedingCounselling || '',
+        treatmentGiven: data.treatmentGiven?.trim() || '',
+        nextFollowUpDate: data.nextFollowUpDate || '',
+        staffId: activeUser.id,
+        staffName: data.staffName.trim() || activeUser.name,
+        remarks: data.remarks?.trim() || '',
+        createdBy: activeUser.email,
+        createdAt: ts,
+        updatedAt: ts,
+      };
+      saved = rec;
+
+      const audit = buildAuditEntry(activeUser, {
+        action: `${rec.visitLabel} प्रसूतीनंतर तपासणी नोंदवली (${data.beneficiary.childName})`,
+        entityType: 'PNC',
+        recordId: rec.id,
+        newValue: {
+          visitLabel: rec.visitLabel,
+          pncDate: rec.pncDate,
+          motherHealthStatus: rec.motherHealthStatus,
+          babyHealthStatus: rec.babyHealthStatus,
+        },
+      });
+
+      await appendSheetRows(activeDb.spreadsheetId, 'pncRecords', [
+        rec as unknown as Record<string, unknown>,
+      ]);
+      await appendSheetRows(activeDb.spreadsheetId, 'auditLogs', [
+        audit as unknown as Record<string, unknown>,
+      ]);
+      setDb((prev) =>
+        prev
+          ? {
+              ...prev,
+              pncRecords: [...prev.pncRecords, rec].sort(
+                (a, b) => a.pncDate.localeCompare(b.pncDate) || a.visitNumber - b.visitNumber
+              ),
+              auditLogs: [audit, ...prev.auditLogs],
+            }
+          : prev
+      );
+    });
+    return saved;
+  };
+
+  const seedDemoPregnancyRecord: SheetDataContextValue['seedDemoPregnancyRecord'] = async () => {
+    let seeded!: { beneficiary: Beneficiary; episode: PregnancyEpisode };
+    await withSync(async () => {
+      const { activeDb, activeUser } = requireDbAndUser();
+      const ts = nowISO();
+      const sc = activeDb.subcentres[0] || {
+        id: 'sc_demo_bhada',
+        name: 'उपकेंद्र भादा',
+      };
+      const vil = activeDb.villages.find((v) => v.subcentreId === sc.id) ||
+        activeDb.villages[0] || {
+          id: 'vil_demo_bhada',
+          name: 'भादा',
+        };
+
+      const benCode = buildNextBeneficiaryCode(activeDb.beneficiaries, 'PREGNANT_WOMAN');
+      const benId = generateId('ben');
+      const mobileNum = `9822${String(Math.floor(100000 + Math.random() * 899999))}`;
+      const ben: Beneficiary = {
+        id: benId,
+        beneficiaryCode: benCode,
+        beneficiaryType: 'PREGNANT_WOMAN',
+        childName: 'सविता राजेश पाटील (Demo)',
+        fullNameEnglish: 'Savita Rajesh Patil',
+        motherName: 'सविता राजेश पाटील (Demo)',
+        fatherName: 'राजेश पांडुरंग पाटील',
+        guardianName: 'राजेश पांडुरंग पाटील',
+        husbandMobile: '9823001122',
+        dob: '1999-06-15',
+        gender: 'स्त्री',
+        mobile: mobileNum,
+        aadhaarNumber: '',
+        caste: 'मराठा',
+        category: 'सर्वसाधारण (Open)',
+        bloodGroup: 'B',
+        rhFactor: 'Negative (-)',
+        plannedDeliveryPlace: 'ग्रामीण रुग्णालय औसा (RH Ausa)',
+        plannedHospitalName: 'RH Ausa',
+        address: `मु. पो. ${vil.name}, ता. औसा, जि. लातूर`,
+        subcentreId: sc.id,
+        subcentreName: sc.name,
+        villageId: vil.id,
+        villageName: vil.name,
+        anganwadi: `${vil.name} क्रमांक १`,
+        registrationDate: '2026-03-20',
+        status: 'सक्रिय',
+        dedupeKey: normalizeBeneficiaryDedupeKey({
+          beneficiaryType: 'PREGNANT_WOMAN',
+          fullName: `सविता राजेश पाटील (Demo) ${benCode}`,
+          guardianOrMotherName: 'राजेश पांडुरंग पाटील',
+          mobile: mobileNum,
+        }),
+        createdBy: activeUser.email,
+        createdAt: ts,
+        updatedAt: ts,
+      };
+
+      const epCode = buildNextEpisodeCode(activeDb.pregnancyEpisodes);
+      const epId = generateId('prg');
+      const episode: PregnancyEpisode = {
+        id: epId,
+        episodeCode: epCode,
+        beneficiaryId: benId,
+        beneficiaryCode: benCode,
+        mcDate: '2026-02-05',
+        eddDate: calculateEddFromMcDate('2026-02-05'),
+        expectedDeliveryPlace: 'ग्रामीण रुग्णालय औसा (RH Ausa)',
+        deliveryFacilityType: 'Government',
+        hospitalName: 'RH Ausa',
+        pregnancyRegistrationDate: '2026-03-20',
+        pregnancyStatus: 'प्रसूती पूर्ण',
+        gravidaPara: 'G2 P1 A0 L1',
+        gravida: 2,
+        para: 1,
+        abortions: 0,
+        livingChildren: 1,
+        previousPregnancyHistory: 'मागील प्रसूती २०२२ मध्ये शासकीय रुग्णालयात झाली',
+        previousCaesarean: 'Yes',
+        previousComplications: 'मागील प्रसूती LSCS व सौम्य रक्तक्षय',
+        bloodGroup: 'B',
+        rhFactor: 'Negative (-)',
+        eddHistoryJson: JSON.stringify([
+          {
+            previousEddDate: '2026-11-10',
+            newEddDate: calculateEddFromMcDate('2026-02-05'),
+            changedAt: ts,
+            changedBy: activeUser.name || 'Demo',
+            reason: 'USG नुसार खात्रीशीर तारीख',
+          },
+        ]),
+        isHighRisk: true,
+        highRiskReasonsJson: JSON.stringify(['Anaemia / Severe Anaemia', 'Previous Caesarean Section', 'Rh Negative']),
+        currentHrpStatus: 'प्रसूती पूर्ण (निगराणीत)',
+        outcomeDate: '2026-11-12',
+        notes: 'Demo संपूर्ण गर्भधारणा चाचणी रेकॉर्ड',
+        createdBy: activeUser.email,
+        createdAt: ts,
+        updatedAt: ts,
+      };
+
+      const demoAncs: AncVisitRecord[] = [
+        {
+          id: generateId('anc'),
+          visitNumber: 1,
+          visitLabel: 'ANC-1',
+          beneficiaryId: benId,
+          beneficiaryCode: benCode,
+          pregnancyEpisodeId: epId,
+          episodeCode: epCode,
+          sessionId: '',
+          subcentreId: sc.id,
+          subcentreName: sc.name,
+          villageId: vil.id,
+          villageName: vil.name,
+          visitDate: '2026-03-20',
+          gestationalWeeks: 6,
+          gestationalDays: 1,
+          gestationalAgeText: '6 आठवडे 1 दिवस',
+          weightKg: '49.5',
+          heightCm: '153',
+          bp: '116/74',
+          bpSystolic: 116,
+          bpDiastolic: 74,
+          hb: '9.4',
+          bloodSugar: '92',
+          urineAlbumin: 'Negative / Nil',
+          urineSugar: 'Negative / Nil',
+          bloodTests: 'CBC, Blood Group, VDRL, HIV, HBsAg',
+          otherTests: 'USG 1st Trimester',
+          doctorObservation: 'सौम्य ॲनिमिया व Rh निगेटिव्ह नोंदवले',
+          treatmentAdvice: 'IFA 1 गोळी दिवसातून दोन वेळा, फॉलिक ॲसिड',
+          nextVisitDate: '2026-05-18',
+          staffId: activeUser.id,
+          staffName: activeUser.name,
+          staffDesignation: activeUser.role,
+          remarks: 'प्रथम त्रैमासिक नोंदणी पूर्ण',
+          createdBy: activeUser.email,
+          createdAt: ts,
+          updatedAt: ts,
+        },
+        {
+          id: generateId('anc'),
+          visitNumber: 2,
+          visitLabel: 'ANC-2',
+          beneficiaryId: benId,
+          beneficiaryCode: benCode,
+          pregnancyEpisodeId: epId,
+          episodeCode: epCode,
+          sessionId: '',
+          subcentreId: sc.id,
+          subcentreName: sc.name,
+          villageId: vil.id,
+          villageName: vil.name,
+          visitDate: '2026-06-15',
+          gestationalWeeks: 18,
+          gestationalDays: 4,
+          gestationalAgeText: '18 आठवडे 4 दिवस',
+          weightKg: '52.0',
+          heightCm: '153',
+          bp: '124/80',
+          bpSystolic: 124,
+          bpDiastolic: 80,
+          hb: '10.1',
+          bloodSugar: '96',
+          urineAlbumin: 'Negative / Nil',
+          urineSugar: 'Negative / Nil',
+          bloodTests: 'ICT, OGTT Normal',
+          otherTests: 'Anomaly Scan Normal',
+          doctorObservation: 'वजन वाढ समाधानकारक, Hb सुधारत आहे',
+          treatmentAdvice: 'IFA + Calcium 500mg नियमित सुरू ठेवा',
+          nextVisitDate: '2026-08-20',
+          staffId: activeUser.id,
+          staffName: activeUser.name,
+          staffDesignation: activeUser.role,
+          remarks: '',
+          createdBy: activeUser.email,
+          createdAt: ts,
+          updatedAt: ts,
+        },
+        {
+          id: generateId('anc'),
+          visitNumber: 3,
+          visitLabel: 'ANC-3',
+          beneficiaryId: benId,
+          beneficiaryCode: benCode,
+          pregnancyEpisodeId: epId,
+          episodeCode: epCode,
+          sessionId: '',
+          subcentreId: sc.id,
+          subcentreName: sc.name,
+          villageId: vil.id,
+          villageName: vil.name,
+          visitDate: '2026-09-10',
+          gestationalWeeks: 31,
+          gestationalDays: 0,
+          gestationalAgeText: '31 आठवडे 0 दिवस',
+          weightKg: '56.2',
+          heightCm: '153',
+          bp: '138/88',
+          bpSystolic: 138,
+          bpDiastolic: 88,
+          hb: '10.6',
+          bloodSugar: '104',
+          urineAlbumin: 'Trace',
+          urineSugar: 'Negative / Nil',
+          bloodTests: 'CBC, LFT/RFT Normal',
+          otherTests: 'Growth Scan Normal',
+          doctorObservation: 'रक्तदाब किंचित वाढलेला, मागील LSCS मुळे उच्च जोखीम गरोदर माता',
+          treatmentAdvice: 'RH औसा येथे MO तपासणी व नियोजित प्रसूती संदर्भ',
+          nextVisitDate: '2026-10-15',
+          staffId: activeUser.id,
+          staffName: activeUser.name,
+          staffDesignation: activeUser.role,
+          remarks: 'HRP पाठपुरावा आवश्यक',
+          createdBy: activeUser.email,
+          createdAt: ts,
+          updatedAt: ts,
+        },
+      ];
+
+      const demoHrp: HighRiskRecord = {
+        id: generateId('hrp'),
+        beneficiaryId: benId,
+        beneficiaryCode: benCode,
+        pregnancyEpisodeId: epId,
+        episodeCode: epCode,
+        isHighRisk: 'YES',
+        identificationDate: '2026-06-15',
+        reasonsJson: JSON.stringify(['Anaemia / Severe Anaemia', 'Previous Caesarean Section', 'Rh Negative']),
+        otherReasonText: '',
+        doctorAdvice: 'संस्थात्मक प्रसूती RH औसा येथे करावी व Anti-D इंजेक्शन नियोजन ठेवावे',
+        treatmentInfo: 'Iron Sucrose / IFA + Calcium, आठवड्यातून एकदा BP तपासणी',
+        referralRequired: 'Yes',
+        referralDate: '2026-10-20',
+        referralHospital: 'ग्रामीण रुग्णालय औसा (RH Ausa)',
+        referralReason: 'Previous LSCS + Rh Negative',
+        followUpDate: '2026-11-01',
+        followUpStatus: 'पूर्ण',
+        currentStatus: 'प्रसूती पूर्ण',
+        statusHistoryJson: JSON.stringify([
+          {
+            status: 'YES',
+            reasons: ['Anaemia / Severe Anaemia', 'Previous Caesarean Section', 'Rh Negative'],
+            currentStatus: 'निरीक्षणाखाली',
+            changedAt: ts,
+            changedBy: activeUser.name,
+            note: 'वैद्यकीय अधिकाऱ्यांद्वारे प्रमाणित HRP',
+          },
+        ]),
+        approvedByMO: 'वैद्यकीय अधिकारी, प्रा. आ. केंद्र भादा',
+        createdBy: activeUser.email,
+        createdAt: ts,
+        updatedAt: ts,
+      };
+
+      const demoRef: MaternalReferralRecord = {
+        id: generateId('ref'),
+        beneficiaryId: benId,
+        beneficiaryCode: benCode,
+        pregnancyEpisodeId: epId,
+        episodeCode: epCode,
+        highRiskRecordId: demoHrp.id,
+        referralDate: '2026-10-20',
+        referredFrom: sc.name,
+        referredToHospital: 'ग्रामीण रुग्णालय औसा (RH Ausa)',
+        referralReason: 'Previous LSCS + Rh Negative सुरक्षित प्रसूतीसाठी',
+        transportArrangement: '108 रुग्णवाहिका नियोजित',
+        followUpDate: '2026-11-01',
+        followUpStatus: 'भेट पूर्ण',
+        outcomeNotes: 'RH औसा येथे तज्ञ तपासणी पूर्ण',
+        referredByStaff: activeUser.name,
+        createdBy: activeUser.email,
+        createdAt: ts,
+        updatedAt: ts,
+      };
+
+      const demoServices: MaternalServiceRecord[] = [
+        {
+          id: generateId('ms'),
+          sessionId: '',
+          sessionDate: '2026-03-20',
+          beneficiaryId: benId,
+          beneficiaryCode: benCode,
+          pregnancyEpisodeId: epId,
+          episodeCode: epCode,
+          subcentreId: sc.id,
+          villageId: vil.id,
+          visitDate: '2026-03-20',
+          serviceCode: 'TD_1',
+          serviceName: 'Td-1 लसीकरण',
+          serviceValue: 'दिली',
+          batchNumber: 'TD-2026A1',
+          staffId: activeUser.id,
+          staffName: activeUser.name,
+          remarks: '',
+          createdAt: ts,
+          updatedAt: ts,
+        },
+        {
+          id: generateId('ms'),
+          sessionId: '',
+          sessionDate: '2026-05-15',
+          beneficiaryId: benId,
+          beneficiaryCode: benCode,
+          pregnancyEpisodeId: epId,
+          episodeCode: epCode,
+          subcentreId: sc.id,
+          villageId: vil.id,
+          visitDate: '2026-05-15',
+          serviceCode: 'TD_2',
+          serviceName: 'Td-2 लसीकरण',
+          serviceValue: 'दिली',
+          batchNumber: 'TD-2026B4',
+          staffId: activeUser.id,
+          staffName: activeUser.name,
+          remarks: '',
+          createdAt: ts,
+          updatedAt: ts,
+        },
+        {
+          id: generateId('ms'),
+          sessionId: '',
+          sessionDate: '2026-06-15',
+          beneficiaryId: benId,
+          beneficiaryCode: benCode,
+          pregnancyEpisodeId: epId,
+          episodeCode: epCode,
+          subcentreId: sc.id,
+          villageId: vil.id,
+          visitDate: '2026-06-15',
+          serviceCode: 'IFA',
+          serviceName: 'IFA गोळ्या वितरण',
+          serviceValue: '100 गोळ्या',
+          batchNumber: '',
+          staffId: activeUser.id,
+          staffName: activeUser.name,
+          remarks: '',
+          createdAt: ts,
+          updatedAt: ts,
+        },
+        {
+          id: generateId('ms'),
+          sessionId: '',
+          sessionDate: '2026-06-15',
+          beneficiaryId: benId,
+          beneficiaryCode: benCode,
+          pregnancyEpisodeId: epId,
+          episodeCode: epCode,
+          subcentreId: sc.id,
+          villageId: vil.id,
+          visitDate: '2026-06-15',
+          serviceCode: 'CALCIUM',
+          serviceName: 'कॅल्शियम गोळ्या वितरण',
+          serviceValue: '100 गोळ्या',
+          batchNumber: '',
+          staffId: activeUser.id,
+          staffName: activeUser.name,
+          remarks: '',
+          createdAt: ts,
+          updatedAt: ts,
+        },
+      ];
+
+      const demoDeliv: DeliveryRecord = {
+        id: generateId('del'),
+        beneficiaryId: benId,
+        beneficiaryCode: benCode,
+        pregnancyEpisodeId: epId,
+        episodeCode: epCode,
+        plannedEddDate: episode.eddDate,
+        plannedDeliveryPlace: 'ग्रामीण रुग्णालय औसा (RH Ausa)',
+        plannedHospitalName: 'RH Ausa',
+        deliveryPlanNotes: 'Elective LSCS नियोजित',
+        referralRequiredBeforeDelivery: 'Yes',
+        actualDeliveryDate: '2026-11-12',
+        actualDeliveryPlace: 'ग्रामीण रुग्णालय औसा (RH Ausa)',
+        actualHospitalName: 'RH Ausa',
+        deliveryType: 'LSCS',
+        deliveryTypeOther: '',
+        numberOfBabies: 1,
+        motherCondition: 'स्थिर व आरोग्यपूर्ण',
+        deliveryComplications: 'कोणतीही गुंतागुंत नाही',
+        referralDetails: 'RH Ausa तज्ञ पथक',
+        attendedByStaff: 'Dr. Kulkarni / ANM',
+        isCompleted: true,
+        createdBy: activeUser.email,
+        createdAt: ts,
+        updatedAt: ts,
+      };
+
+      const demoBaby: BabyRecord = {
+        id: generateId('baby'),
+        babyCode: `PHCB-BABY-2026-${String(activeDb.babyRecords.length + 1).padStart(4, '0')}`,
+        motherBeneficiaryId: benId,
+        motherBeneficiaryCode: benCode,
+        pregnancyEpisodeId: epId,
+        episodeCode: epCode,
+        deliveryRecordId: demoDeliv.id,
+        babyNumber: 1,
+        babyName: 'सविता पाटील बाळ',
+        gender: 'मुलगी',
+        birthWeightGrams: 2950,
+        birthOutcome: 'Live Birth',
+        birthOutcomeOther: '',
+        babyCondition: 'सक्रिय, स्तनपान सुरू (Apgar 9/10)',
+        dob: '2026-11-12',
+        notes: 'जन्मजात BCG, OPV-0, Hep-B दिले',
+        createdBy: activeUser.email,
+        createdAt: ts,
+        updatedAt: ts,
+      };
+
+      const demoPnc: PncRecord = {
+        id: generateId('pnc'),
+        visitNumber: 1,
+        visitLabel: 'PNC-1',
+        beneficiaryId: benId,
+        beneficiaryCode: benCode,
+        pregnancyEpisodeId: epId,
+        episodeCode: epCode,
+        deliveryRecordId: demoDeliv.id,
+        pncDate: '2026-11-15',
+        motherBp: '118/76',
+        motherHealthStatus: 'माता स्थिर, शस्त्रक्रिया जखम स्वच्छ',
+        bleedingStatus: 'सामान्य (Normal Lochia)',
+        breastfeedingStatus: 'नियमित स्तनपान सुरू',
+        babyWeightGrams: 2920,
+        babyHealthStatus: 'बाळ सक्रिय, कावीळ नाही',
+        breastfeedingCounselling: 'Yes',
+        treatmentGiven: 'IFA व Calcium सुरू, Anti-D दिले',
+        nextFollowUpDate: '2026-11-22',
+        staffId: activeUser.id,
+        staffName: activeUser.name,
+        remarks: 'PNC-1 गृहभेट पूर्ण',
+        createdBy: activeUser.email,
+        createdAt: ts,
+        updatedAt: ts,
+      };
+
+      const audit = buildAuditEntry(activeUser, {
+        action: `चाचणी Demo गरोदर माता रेकॉर्ड तयार केले (${benCode})`,
+        entityType: 'PREGNANCY_EPISODE',
+        recordId: epId,
+        newValue: { beneficiaryCode: benCode, episodeCode: epCode },
+      });
+
+      await appendSheetRows(activeDb.spreadsheetId, 'beneficiaries', [
+        ben as unknown as Record<string, unknown>,
+      ]);
+      await appendSheetRows(activeDb.spreadsheetId, 'pregnancyEpisodes', [
+        episode as unknown as Record<string, unknown>,
+      ]);
+      await appendSheetRows(
+        activeDb.spreadsheetId,
+        'ancVisits',
+        demoAncs as unknown as Record<string, unknown>[]
+      );
+      await appendSheetRows(activeDb.spreadsheetId, 'highRiskRecords', [
+        demoHrp as unknown as Record<string, unknown>,
+      ]);
+      await appendSheetRows(activeDb.spreadsheetId, 'maternalReferrals', [
+        demoRef as unknown as Record<string, unknown>,
+      ]);
+      await appendSheetRows(
+        activeDb.spreadsheetId,
+        'maternalServiceRecords',
+        demoServices as unknown as Record<string, unknown>[]
+      );
+      await appendSheetRows(activeDb.spreadsheetId, 'deliveryRecords', [
+        demoDeliv as unknown as Record<string, unknown>,
+      ]);
+      await appendSheetRows(activeDb.spreadsheetId, 'babyRecords', [
+        demoBaby as unknown as Record<string, unknown>,
+      ]);
+      await appendSheetRows(activeDb.spreadsheetId, 'pncRecords', [
+        demoPnc as unknown as Record<string, unknown>,
+      ]);
+      await appendSheetRows(activeDb.spreadsheetId, 'auditLogs', [
+        audit as unknown as Record<string, unknown>,
+      ]);
+
+      setDb((prev) =>
+        prev
+          ? {
+              ...prev,
+              beneficiaries: [...prev.beneficiaries, ben],
+              pregnancyEpisodes: [episode, ...prev.pregnancyEpisodes],
+              ancVisits: [...prev.ancVisits, ...demoAncs],
+              highRiskRecords: [demoHrp, ...prev.highRiskRecords],
+              maternalReferrals: [demoRef, ...prev.maternalReferrals],
+              maternalServiceRecords: [...prev.maternalServiceRecords, ...demoServices],
+              deliveryRecords: [demoDeliv, ...prev.deliveryRecords],
+              babyRecords: [...prev.babyRecords, demoBaby],
+              pncRecords: [...prev.pncRecords, demoPnc],
+              auditLogs: [audit, ...prev.auditLogs],
+            }
+          : prev
+      );
+      seeded = { beneficiary: ben, episode };
+    });
+    return seeded;
+  };
+
   return (
     <SheetDataContext.Provider
       value={{
@@ -2185,6 +3642,14 @@ export const SheetDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         administerVaccineDoses,
         recordMaternalServices,
         saveRiChecklist,
+        recordAncVisit,
+        saveHighRiskRecord,
+        recordMaternalImmunizationAndSupplements,
+        recordMaternalReferral,
+        updateMaternalReferralStatus,
+        recordDeliveryAndBabies,
+        recordPncVisit,
+        seedDemoPregnancyRecord,
       }}
     >
       {children}

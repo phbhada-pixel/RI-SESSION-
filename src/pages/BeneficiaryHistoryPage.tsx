@@ -1,17 +1,27 @@
 import React, { useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { Printer, CheckCircle2, Clock, AlertCircle } from 'lucide-react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { Printer, CheckCircle2, Clock, AlertCircle, Download, MapPin, HeartPulse } from 'lucide-react';
 import { useSheetData } from '../context/SheetDataContext';
 import { SearchableSelect } from '../components/SearchableSelect';
 import { formatDDMMYYYY, getTodayIST } from '../utils/dateUtils';
 import { evaluateBeneficiaryEligibility } from '../utils/eligibilityEngine';
 import { maskAadhaar } from '../utils/privacyUtils';
 import { formatDeliveryFacilityTypeMarathi, groupMaternalVisitsByDate } from '../utils/maternalUtils';
+import { downloadBeneficiaryConsolidatedPDF } from '../utils/sessionPdfReport';
+import { VitalsComparisonCard } from '../components/VitalsComparisonCard';
+import { EmptyState } from '../components/EmptyState';
+import { PageHeader } from '../components/PageHeader';
+import { Toast } from '../components/Toast';
 
 export const BeneficiaryHistoryPage: React.FC = () => {
   const { db, currentUser } = useSheetData();
   const [params, setParams] = useSearchParams();
   const [selectedId, setSelectedId] = useState(params.get('beneficiaryId') || '');
+  const [pdfDownloading, setPdfDownloading] = useState(false);
+  const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' }>({
+    msg: '',
+    type: 'success',
+  });
 
   const scopedSubcentre =
     currentUser && ['CHO', 'ANM'].includes(currentUser.role) ? currentUser.subcentreId || '' : '';
@@ -52,27 +62,107 @@ export const BeneficiaryHistoryPage: React.FC = () => {
     return db.maternalServiceRecords.filter((r) => r.beneficiaryId === selectedBeneficiary.id);
   }, [db, selectedBeneficiary, isPW]);
 
+  const allCheckupRecords = useMemo(() => {
+    if (!db || !selectedBeneficiary) return [];
+    return db.maternalServiceRecords.filter((r) => r.beneficiaryId === selectedBeneficiary.id);
+  }, [db, selectedBeneficiary]);
+
+  const visitedPlaces = useMemo(() => {
+    if (!db || !selectedBeneficiary) return [];
+    const sesMap = new Map(db.vaccinationSessions.map((s) => [s.id, s]));
+    const vilMap = new Map(db.villages.map((v) => [v.id, v]));
+    const scMap = new Map(db.subcentres.map((s) => [s.id, s]));
+    const locMap = new Map<
+      string,
+      { key: string; date: string; sessionCode: string; placeText: string; services: string[] }
+    >();
+
+    const ensureLoc = (sessionId: string, villageId?: string, subcentreId?: string, dateHint?: string) => {
+      const ses = sessionId ? sesMap.get(sessionId) : undefined;
+      const vil = ses?.villageName || (villageId ? vilMap.get(villageId)?.name : '') || selectedBeneficiary.villageName;
+      const sc = ses?.subcentreName || (subcentreId ? scMap.get(subcentreId)?.name : '') || selectedBeneficiary.subcentreName;
+      const date = ses?.sessionDate || dateHint || '-';
+      const key = ses?.id || `${date}_${vil}_${sc}`;
+      let entry = locMap.get(key);
+      if (!entry) {
+        entry = {
+          key,
+          date,
+          sessionCode: ses?.sessionCode || '-',
+          placeText: `${vil}${ses?.location ? ` (${ses.location})` : ''} · ${sc}`,
+          services: [],
+        };
+        locMap.set(key, entry);
+      }
+      return entry;
+    };
+
+    for (const sb of db.sessionBeneficiaries.filter((x) => x.beneficiaryId === selectedBeneficiary.id)) {
+      ensureLoc(sb.sessionId, sb.villageId, sb.subcentreId, (sb.addedAt || '').slice(0, 10));
+    }
+    for (const vr of db.vaccinationRecords.filter((x) => x.beneficiaryId === selectedBeneficiary.id)) {
+      const entry = ensureLoc(vr.sessionId, vr.villageId, vr.subcentreId, vr.administeredDate);
+      entry.services.push(vr.doseName);
+    }
+    for (const mr of allCheckupRecords) {
+      const entry = ensureLoc(mr.sessionId, mr.villageId, mr.subcentreId, mr.visitDate || mr.sessionDate);
+      entry.services.push(mr.serviceValue ? `${mr.serviceName}: ${mr.serviceValue}` : mr.serviceName);
+    }
+
+    return Array.from(locMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+  }, [db, selectedBeneficiary, allCheckupRecords]);
+
   if (!db) return null;
 
-  return (
-    <div className="space-y-5">
-      <div className="no-print flex flex-col md:flex-row md:items-center justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-bold text-slate-900">लसीकरण व ANC इतिहास</h2>
-          <p className="text-xs text-slate-500">लाभार्थ्याचे संपूर्ण लसीकरण कार्ड / गरोदर माता ANC इतिहास</p>
-        </div>
-        {selectedBeneficiary && (
-          <button
-            type="button"
-            onClick={() => window.print()}
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-white bg-teal-700 rounded-lg hover:bg-teal-800 whitespace-nowrap"
-          >
-            <Printer className="w-4 h-4" /> कार्ड प्रिंट करा
-          </button>
-        )}
-      </div>
+  const handleDownloadConsolidatedPdf = async () => {
+    if (!selectedBeneficiary) return;
+    setPdfDownloading(true);
+    try {
+      const preparedBy = currentUser ? `${currentUser.name} (${currentUser.role})` : 'PHC Bhada';
+      await downloadBeneficiaryConsolidatedPDF(db, selectedBeneficiary.id, preparedBy);
+      setToast({ msg: 'एकत्रित संपूर्ण रेकॉर्ड PDF डाउनलोड झाले.', type: 'success' });
+    } catch (err) {
+      setToast({
+        msg: err instanceof Error ? err.message : 'PDF तयार करताना त्रुटी आली.',
+        type: 'error',
+      });
+    } finally {
+      setPdfDownloading(false);
+    }
+  };
 
-      <div className="no-print bg-white p-4 rounded-xl border border-slate-200 max-w-xl">
+  return (
+    <div className="app-page">
+      <PageHeader
+        noPrint
+        title="लसीकरण व ANC इतिहास"
+        subtitle="लाभार्थ्याचे सर्व ठिकाणचे एकत्रित संपूर्ण लसीकरण, तपासणी व वाढ रेकॉर्ड"
+        actions={
+          selectedBeneficiary ? (
+            <div className="flex flex-wrap items-center gap-2">
+              {isPW && (
+                <Link to={`/pregnant-women/${selectedBeneficiary.id}`} className="app-btn-soft">
+                  <HeartPulse className="w-4 h-4" /> ३६०° माता प्रोफाइल
+                </Link>
+              )}
+              <button
+                type="button"
+                disabled={pdfDownloading}
+                onClick={handleDownloadConsolidatedPdf}
+                className="app-btn-primary"
+              >
+                <Download className="w-4 h-4" />
+                {pdfDownloading ? 'PDF तयार होत आहे...' : 'एकत्रित संपूर्ण रेकॉर्ड PDF डाउनलोड'}
+              </button>
+              <button type="button" onClick={() => window.print()} className="app-btn-secondary">
+                <Printer className="w-4 h-4" /> कार्ड प्रिंट करा
+              </button>
+            </div>
+          ) : undefined
+        }
+      />
+
+      <div className="no-print app-card app-card-body max-w-xl">
         <SearchableSelect
           label="लाभार्थी निवडा (नाव किंवा आयडीद्वारे शोधा)"
           value={selectedId}
@@ -85,8 +175,8 @@ export const BeneficiaryHistoryPage: React.FC = () => {
             label: `${b.childName} (${b.beneficiaryCode}) · ${b.beneficiaryType === 'PREGNANT_WOMAN' ? 'गरोदर माता' : 'बालक'}`,
             sublabel:
               b.beneficiaryType === 'PREGNANT_WOMAN'
-                ? `${b.villageName} · पती: ${b.guardianName || '-'}`
-                : `${b.villageName} · आई: ${b.motherName || b.guardianName || '-'}`,
+                ? `${b.villageName} · पती: ${b.guardianName || '-'} · ${b.mobile}`
+                : `${b.villageName} · आई: ${b.motherName || b.guardianName || '-'} · ${b.mobile}`,
           }))}
         />
       </div>
@@ -94,7 +184,7 @@ export const BeneficiaryHistoryPage: React.FC = () => {
       {selectedBeneficiary ? (
         <div className="space-y-5">
           {/* Profile Banner */}
-          <div className="bg-white p-5 rounded-xl border border-slate-200">
+          <div className="app-card app-card-body">
             <div className="hidden print:block text-center border-b border-slate-300 pb-2 mb-3">
               <div className="text-base font-bold">
                 प्राथमिक आरोग्य केंद्र भादा — {isPW ? 'गरोदर माता ANC कार्ड' : 'बालक लसीकरण कार्ड'}
@@ -173,6 +263,51 @@ export const BeneficiaryHistoryPage: React.FC = () => {
                 </div>
               )}
             </div>
+          </div>
+
+          {/* Vitals & Growth Comparison (Weight, Height, Hb, BP, BSL) across all locations */}
+          <VitalsComparisonCard
+            records={allCheckupRecords}
+            sessions={db.vaccinationSessions}
+            villages={db.villages}
+            title="मागील तपासणी व वाढ तुलना — सर्व ठिकाणे (वजन · उंची · Hb · BP · BSL)"
+          />
+
+          {/* Consolidated Places & Sessions Visited */}
+          <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto">
+            <div className="px-4 py-3 border-b border-slate-200 text-sm font-bold text-slate-900 flex items-center gap-1.5">
+              <MapPin className="w-4 h-4 text-teal-700" /> सेवा घेतलेली सर्व ठिकाणे व सत्रे ({visitedPlaces.length})
+            </div>
+            {visitedPlaces.length === 0 ? (
+              <div className="p-4 text-xs text-slate-500">अद्याप कोणत्याही सत्रातील उपस्थिती नोंद नाही.</div>
+            ) : (
+              <table className="w-full text-xs text-left">
+                <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
+                  <tr>
+                    <th className="px-4 py-2.5 font-semibold">दिनांक</th>
+                    <th className="px-4 py-2.5 font-semibold">सत्र कोड</th>
+                    <th className="px-4 py-2.5 font-semibold">ठिकाण (गाव · उपकेंद्र)</th>
+                    <th className="px-4 py-2.5 font-semibold">दिलेल्या सेवा / तपासण्या</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {visitedPlaces.map((loc) => (
+                    <tr key={loc.key}>
+                      <td className="px-4 py-2 font-mono-tabular whitespace-nowrap font-semibold">
+                        {formatDDMMYYYY(loc.date)}
+                      </td>
+                      <td className="px-4 py-2 font-mono-tabular text-teal-800">{loc.sessionCode}</td>
+                      <td className="px-4 py-2">{loc.placeText}</td>
+                      <td className="px-4 py-2 text-slate-700">
+                        {loc.services.length > 0
+                          ? Array.from(new Set(loc.services)).join(', ')
+                          : 'सत्र उपस्थिती नोंद'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
 
           {!isPW && summary && (
@@ -296,9 +431,11 @@ export const BeneficiaryHistoryPage: React.FC = () => {
                         <th className="px-3 py-2.5 font-semibold">भेट दिनांक</th>
                         <th className="px-3 py-2.5 font-semibold">प्रकरण</th>
                         <th className="px-3 py-2.5 font-semibold">ANC तपासणी</th>
-                        <th className="px-3 py-2.5 font-semibold">BP</th>
                         <th className="px-3 py-2.5 font-semibold">वजन</th>
+                        <th className="px-3 py-2.5 font-semibold">उंची</th>
                         <th className="px-3 py-2.5 font-semibold">Hb</th>
+                        <th className="px-3 py-2.5 font-semibold">BP</th>
+                        <th className="px-3 py-2.5 font-semibold">BSL</th>
                         <th className="px-3 py-2.5 font-semibold">रक्त व लघवी</th>
                         <th className="px-3 py-2.5 font-semibold">Td लस</th>
                         <th className="px-3 py-2.5 font-semibold">IFA / कॅल्शियम</th>
@@ -315,9 +452,11 @@ export const BeneficiaryHistoryPage: React.FC = () => {
                             {vr.episodeCode}
                           </td>
                           <td className="px-3 py-2.5">{vr.ancExam}</td>
-                          <td className="px-3 py-2.5 font-mono-tabular">{vr.bp}</td>
                           <td className="px-3 py-2.5 font-mono-tabular">{vr.weight}</td>
+                          <td className="px-3 py-2.5 font-mono-tabular">{vr.height}</td>
                           <td className="px-3 py-2.5 font-mono-tabular">{vr.hb}</td>
+                          <td className="px-3 py-2.5 font-mono-tabular">{vr.bp}</td>
+                          <td className="px-3 py-2.5 font-mono-tabular">{vr.bsl}</td>
                           <td className="px-3 py-2.5">{vr.bloodUrine}</td>
                           <td className="px-3 py-2.5">{vr.tdDoses}</td>
                           <td className="px-3 py-2.5">{vr.supplements}</td>
@@ -374,10 +513,16 @@ export const BeneficiaryHistoryPage: React.FC = () => {
           )}
         </div>
       ) : (
-        <div className="bg-white p-8 rounded-xl border border-slate-200 text-center text-sm text-slate-500">
-          लसीकरण इतिहास पाहण्यासाठी वरील शोध बॉक्समधून लाभार्थी निवडा.
+        <div className="app-card">
+          <EmptyState message="लसीकरण इतिहास पाहण्यासाठी वरील शोध बॉक्समधून लाभार्थी निवडा." />
         </div>
       )}
+
+      <Toast
+        message={toast.msg}
+        type={toast.type}
+        onClose={() => setToast({ msg: '', type: 'success' })}
+      />
     </div>
   );
 };

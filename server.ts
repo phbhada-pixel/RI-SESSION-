@@ -52,9 +52,144 @@ function writePointer(pointer: CentralSheetPointer): void {
   fs.writeFileSync(POINTER_FILE, JSON.stringify(pointer, null, 2), 'utf-8');
 }
 
+const AUTH_COOKIE_NAME = 'phc_bhada_ws_session';
+
+function parseCookies(cookieHeader: string | undefined): Record<string, string> {
+  const map: Record<string, string> = {};
+  if (!cookieHeader) return map;
+  for (const part of cookieHeader.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx <= 0) continue;
+    const key = part.slice(0, idx).trim();
+    const val = part.slice(idx + 1).trim();
+    if (key) {
+      try {
+        map[key] = decodeURIComponent(val);
+      } catch {
+        map[key] = val;
+      }
+    }
+  }
+  return map;
+}
+
+function isHttpsRequest(req: express.Request): boolean {
+  if (req.secure) return true;
+  const proto = String(req.headers['x-forwarded-proto'] || '').toLowerCase();
+  return proto.includes('https');
+}
+
+function buildCookieAttributes(req: express.Request, maxAgeSeconds: number): string {
+  const https = isHttpsRequest(req);
+  const parts = [
+    `Path=/`,
+    `HttpOnly`,
+    `Max-Age=${Math.max(0, Math.floor(maxAgeSeconds))}`,
+    `SameSite=${https ? 'None' : 'Lax'}`,
+  ];
+  if (https) {
+    parts.push('Secure');
+  }
+  return parts.join('; ');
+}
+
+interface StoredCookieSession {
+  accessToken: string;
+  email: string;
+  expiresAtMs: number;
+}
+
 async function startServer() {
   const app = express();
   app.use(express.json());
+
+  // Persistent HttpOnly cookie session for the short-lived Google OAuth access token
+  // so browser reloads do not force Sign in with Google again until explicit logout or token expiry.
+  app.get('/api/auth/session', (req, res) => {
+    const cookies = parseCookies(req.headers.cookie);
+    const raw = cookies[AUTH_COOKIE_NAME];
+    if (!raw) {
+      res.json({ authenticated: false });
+      return;
+    }
+    try {
+      const jsonStr = Buffer.from(raw, 'base64url').toString('utf-8');
+      const parsed = JSON.parse(jsonStr) as Partial<StoredCookieSession>;
+      if (
+        !parsed.accessToken ||
+        !parsed.email ||
+        !parsed.expiresAtMs ||
+        parsed.expiresAtMs <= Date.now() + 30_000
+      ) {
+        res.setHeader(
+          'Set-Cookie',
+          `${AUTH_COOKIE_NAME}=; ${buildCookieAttributes(req, 0)}`
+        );
+        res.json({ authenticated: false });
+        return;
+      }
+      res.json({
+        authenticated: true,
+        accessToken: parsed.accessToken,
+        email: parsed.email,
+        expiresAtMs: parsed.expiresAtMs,
+      });
+    } catch {
+      res.setHeader(
+        'Set-Cookie',
+        `${AUTH_COOKIE_NAME}=; ${buildCookieAttributes(req, 0)}`
+      );
+      res.json({ authenticated: false });
+    }
+  });
+
+  app.post('/api/auth/session', async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        res.status(401).json({ error: 'Missing Bearer token' });
+        return;
+      }
+      const accessToken = authHeader.slice('Bearer '.length).trim();
+      const tokenInfoRes = await fetch(
+        `https://www.googleapis.com/oauth2/v3/tokeninfo?access_token=${encodeURIComponent(accessToken)}`
+      );
+      if (!tokenInfoRes.ok) {
+        res.status(401).json({ error: 'Invalid Google access token' });
+        return;
+      }
+      const info = (await tokenInfoRes.json()) as {
+        email?: string;
+        expires_in?: string | number;
+      };
+      const email = (info.email || '').trim().toLowerCase();
+      if (!email) {
+        res.status(401).json({ error: 'Token missing email' });
+        return;
+      }
+      const expiresInSec = Math.max(60, Number(info.expires_in) || 3500);
+      const expiresAtMs = Date.now() + expiresInSec * 1000;
+      const payload: StoredCookieSession = { accessToken, email, expiresAtMs };
+      const encoded = Buffer.from(JSON.stringify(payload), 'utf-8').toString('base64url');
+      res.setHeader(
+        'Set-Cookie',
+        `${AUTH_COOKIE_NAME}=${encodeURIComponent(encoded)}; ${buildCookieAttributes(req, expiresInSec)}`
+      );
+      res.json({ authenticated: true, email, expiresAtMs });
+    } catch (err) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Failed to store session cookie',
+      });
+    }
+  });
+
+  app.delete('/api/auth/session', (req, res) => {
+    res.setHeader(
+      'Set-Cookie',
+      `${AUTH_COOKIE_NAME}=; ${buildCookieAttributes(req, 0)}`
+    );
+    res.json({ authenticated: false });
+  });
 
   // Server-authoritative timestamp & IST date endpoint for 2-day session locking validation
   app.get('/api/server-time', (_req, res) => {

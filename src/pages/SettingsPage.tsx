@@ -1,10 +1,7 @@
 import React, { useRef, useState } from 'react';
 import {
   CheckCircle2,
-  Copy,
   Download,
-  ExternalLink,
-  FileSpreadsheet,
   HeartPulse,
   PlusCircle,
   Share2,
@@ -13,10 +10,10 @@ import {
   Upload,
 } from 'lucide-react';
 import { useSheetData } from '../context/SheetDataContext';
-import { CENTRAL_OWNER_EMAIL } from '../services/googleSheetsService';
 import { MaternalServiceConfigItem } from '../types';
 import { getMaternalServiceCatalog } from '../utils/maternalUtils';
 import { ConfirmModal } from '../components/ConfirmModal';
+import { PageHeader } from '../components/PageHeader';
 import { Toast } from '../components/Toast';
 
 export const SettingsPage: React.FC = () => {
@@ -27,8 +24,6 @@ export const SettingsPage: React.FC = () => {
     enableMultiGmailSharing,
     saveSystemSettings,
     saveMaternalServiceCatalog,
-    connectSheet,
-    createNewSheet,
     downloadFullWorkbook,
     uploadExcelToSheet,
     seedStandardNIS,
@@ -50,14 +45,12 @@ export const SettingsPage: React.FC = () => {
   const [newAncRequiresBatch, setNewAncRequiresBatch] = useState(false);
   const [newAncRepeatEveryVisit, setNewAncRepeatEveryVisit] = useState(true);
 
-  const [switchInput, setSwitchInput] = useState('');
-  const [newSheetTitle, setNewSheetTitle] = useState('PHC_Bhada_Vaccination_Database_New');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [pendingUploadFile, setPendingUploadFile] = useState<File | null>(null);
   const [uploadMode, setUploadMode] = useState<'APPEND' | 'REPLACE'>('APPEND');
 
   const [confirmAction, setConfirmAction] = useState<
-    'SETTINGS' | 'MATERNAL_CATALOG' | 'SEED_NIS' | 'SEED_HIERARCHY' | 'NEW_SHEET' | 'SHARE_ANYONE' | null
+    'SETTINGS' | 'MATERNAL_CATALOG' | 'SEED_NIS' | 'SEED_HIERARCHY' | 'SHARE_ANYONE' | null
   >(null);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' }>({
@@ -66,17 +59,6 @@ export const SettingsPage: React.FC = () => {
   });
 
   if (!db) return null;
-
-  const staffAppUrl = `${window.location.origin}/?sheetId=${db.spreadsheetId}`;
-
-  const handleCopyStaffLink = async () => {
-    try {
-      await navigator.clipboard.writeText(staffAppUrl);
-      setToast({ msg: 'कर्मचारी अ‍ॅप लिंक कॉपी झाली.', type: 'success' });
-    } catch {
-      setToast({ msg: 'लिंक कॉपी करता आली नाही.', type: 'error' });
-    }
-  };
 
   const handleConfirm = async () => {
     setBusy(true);
@@ -89,23 +71,20 @@ export const SettingsPage: React.FC = () => {
           timezone: 'Asia/Kolkata',
           allowEditDaysAfterSession: allowEditDays,
         });
-        setToast({ msg: 'प्रणाली सेटिंग्ज Google Sheet मध्ये जतन केली.', type: 'success' });
+        setToast({ msg: 'प्रणाली सेटिंग्ज जतन केली.', type: 'success' });
       } else if (confirmAction === 'MATERNAL_CATALOG') {
         await saveMaternalServiceCatalog(maternalCatalog);
-        setToast({ msg: 'माता ANC व लसीकरण सेवा यादी Google Sheet मध्ये जतन केली.', type: 'success' });
+        setToast({ msg: 'माता ANC व लसीकरण सेवा यादी जतन केली.', type: 'success' });
       } else if (confirmAction === 'SEED_NIS') {
         await seedStandardNIS();
         setToast({ msg: 'राष्ट्रीय लसीकरण वेळापत्रक (NIS) जतन केले.', type: 'success' });
       } else if (confirmAction === 'SEED_HIERARCHY') {
         await seedStarterHierarchy();
-        setToast({ msg: 'भादा नमुना उपकेंद्रे व गावे Google Sheet मध्ये जतन केली.', type: 'success' });
-      } else if (confirmAction === 'NEW_SHEET') {
-        await createNewSheet(newSheetTitle.trim() || 'PHC_Bhada_Vaccination_Database');
-        setToast({ msg: 'नवीन Google Sheet तयार करून जोडले.', type: 'success' });
+        setToast({ msg: 'भादा नमुना उपकेंद्रे व गावे जतन केली.', type: 'success' });
       } else if (confirmAction === 'SHARE_ANYONE') {
         await enableMultiGmailSharing();
         setToast({
-          msg: 'आता इतर कोणत्याही Gmail लॉगिनद्वारे डेटा थेट या Sheet मध्ये जतन होईल.',
+          msg: 'आता सर्व अधिकृत कर्मचारी त्यांच्या खात्यावरून लॉगिन करून थेट प्रणालीत डेटा जतन करू शकतील.',
           type: 'success',
         });
       }
@@ -123,7 +102,7 @@ export const SettingsPage: React.FC = () => {
     try {
       const res = await uploadExcelToSheet(pendingUploadFile, uploadMode);
       setToast({
-        msg: `${res.rowCount} ओळी Google Sheet मध्ये अपलोड झाल्या (${res.tabsUpdated.join(', ')}).`,
+        msg: `${res.rowCount} ओळी प्रणालीत यशस्वीरित्या अपलोड झाल्या.`,
         type: 'success',
       });
       setPendingUploadFile(null);
@@ -136,40 +115,27 @@ export const SettingsPage: React.FC = () => {
   };
 
   return (
-    <div className="max-w-5xl space-y-6">
-      <div>
-        <h2 className="text-xl font-bold text-slate-900">Settings व Google Sheet व्यवस्थापन</h2>
-        <p className="text-xs text-slate-500">
-          प्रणाली मापदंड, केंद्रीय Google Sheet ({CENTRAL_OWNER_EMAIL}), आणि संपूर्ण डेटा अपलोड / डाउनलोड केंद्र
-        </p>
-      </div>
+    <div className="app-page max-w-5xl">
+      <PageHeader
+        title="सेटिंग्ज व प्रणाली व्यवस्थापन"
+        subtitle="प्राथमिक आरोग्य केंद्र मापदंड, ANC सेवा मास्टर आणि डेटा बॅकअप / अपलोड केंद्र"
+      />
 
-      {/* Connected Google Sheet Card */}
-      <div className="bg-white p-5 rounded-xl border border-slate-200 space-y-4">
+      {/* Data Backup & Staff Access Card */}
+      <div className="app-card app-card-body space-y-4">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
           <div className="space-y-1">
-            <div className="flex items-center gap-2 text-sm font-bold text-slate-900">
-              <FileSpreadsheet className="w-4 h-4 text-teal-700" />
-              सध्या जोडलेले Google Sheet: {db.spreadsheetTitle}
-            </div>
-            <div className="text-xs text-slate-500 font-mono-tabular break-all">
-              Spreadsheet ID: {db.spreadsheetId} · मालक खाते: {CENTRAL_OWNER_EMAIL}
-            </div>
+            <div className="app-section-title text-slate-900">डेटा बॅकअप व Excel आयात</div>
+            <p className="text-xs text-slate-500">
+              संपूर्ण पोर्टल डेटाचे Excel बॅकअप डाउनलोड करा किंवा विद्यमान डेटा अपलोड करा.
+            </p>
           </div>
 
           <div className="flex flex-wrap gap-2">
-            <a
-              href={db.spreadsheetUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-teal-800 bg-teal-50 border border-teal-200 rounded-lg hover:bg-teal-100 whitespace-nowrap"
-            >
-              Google Sheet उघडा <ExternalLink className="w-3.5 h-3.5" />
-            </a>
             <button
               type="button"
               onClick={downloadFullWorkbook}
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 whitespace-nowrap"
+              className="app-btn-secondary text-xs"
             >
               <Download className="w-4 h-4" /> संपूर्ण Excel डाउनलोड
             </button>
@@ -186,129 +152,56 @@ export const SettingsPage: React.FC = () => {
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-white bg-teal-700 rounded-lg hover:bg-teal-800 whitespace-nowrap"
+              className="app-btn-primary text-xs"
             >
               <Upload className="w-4 h-4" /> Excel अपलोड करा
             </button>
           </div>
         </div>
 
-        {/* Multi-Gmail Central Save Controls */}
+        {/* Multi-Staff Central Save Controls */}
         <div className="pt-4 border-t border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-3">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
-              {sharedWithAnyone ? (
-                <CheckCircle2 className="w-4 h-4 text-teal-700 shrink-0" />
-              ) : (
-                <Share2 className="w-4 h-4 text-amber-700 shrink-0" />
-              )}
-              <span>
-                सर्व Gmail लॉगिन स्थिती:{' '}
-                {sharedWithAnyone
-                  ? `सक्रिय — कोणतेही Gmail खाते थेट ${CENTRAL_OWNER_EMAIL} च्या या Sheet मध्ये डेटा जतन करू शकते`
-                  : 'मर्यादित — इतर Gmail खात्यांना थेट संपादन परवानगी देण्यासाठी खालील बटण दाबा'}
-              </span>
-            </div>
-            <div className="text-xs text-slate-500 font-mono-tabular break-all">
-              कर्मचारी लिंक: {staffAppUrl}
-            </div>
+          <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
+            {sharedWithAnyone ? (
+              <CheckCircle2 className="w-4 h-4 text-teal-700 shrink-0" />
+            ) : (
+              <Share2 className="w-4 h-4 text-amber-700 shrink-0" />
+            )}
+            <span>
+              कर्मचारी लॉगिन डेटा प्रवेश:{' '}
+              {sharedWithAnyone
+                ? 'सक्रिय — सर्व अधिकृत कर्मचारी थेट केंद्रीय प्रणालीत डेटा जतन करू शकतात'
+                : 'मर्यादित — इतर कर्मचाऱ्यांना थेट संपादन परवानगी देण्यासाठी सक्रिय करा'}
+            </span>
           </div>
 
-          <div className="flex flex-wrap gap-2 shrink-0">
+          {isCentralOwner && !sharedWithAnyone && (
             <button
               type="button"
-              onClick={handleCopyStaffLink}
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 whitespace-nowrap"
+              onClick={() => setConfirmAction('SHARE_ANYONE')}
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg whitespace-nowrap shrink-0 transition-colors"
             >
-              <Copy className="w-3.5 h-3.5" /> कर्मचारी लिंक कॉपी करा
+              <Share2 className="w-3.5 h-3.5" /> कर्मचारी डेटा प्रवेश सक्रिय करा
             </button>
-            {isCentralOwner && !sharedWithAnyone && (
-              <button
-                type="button"
-                onClick={() => setConfirmAction('SHARE_ANYONE')}
-                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg whitespace-nowrap"
-              >
-                <Share2 className="w-3.5 h-3.5" /> सर्व Gmail साठी शेअर सुरू करा
-              </button>
-            )}
-          </div>
+          )}
         </div>
-
-        {isCentralOwner ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-slate-100">
-            <div className="space-y-2">
-              <label className="block text-xs font-medium text-slate-700">
-                दुसरे विद्यमान Google Sheet जोडा (URL किंवा ID)
-              </label>
-              <div className="flex gap-2">
-                <input
-                  value={switchInput}
-                  onChange={(e) => setSwitchInput(e.target.value)}
-                  placeholder="https://docs.google.com/spreadsheets/d/..."
-                  className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm"
-                />
-                <button
-                  type="button"
-                  onClick={async () => {
-                    try {
-                      await connectSheet(switchInput);
-                      setSwitchInput('');
-                      setToast({ msg: 'नवीन Google Sheet यशस्वीरित्या जोडले.', type: 'success' });
-                    } catch (err) {
-                      setToast({
-                        msg: err instanceof Error ? err.message : 'त्रुटी आली.',
-                        type: 'error',
-                      });
-                    }
-                  }}
-                  className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold whitespace-nowrap"
-                >
-                  जोडा
-                </button>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="block text-xs font-medium text-slate-700">नवीन कोरे Google Sheet तयार करा</label>
-              <div className="flex gap-2">
-                <input
-                  value={newSheetTitle}
-                  onChange={(e) => setNewSheetTitle(e.target.value)}
-                  className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm"
-                />
-                <button
-                  type="button"
-                  onClick={() => setConfirmAction('NEW_SHEET')}
-                  className="inline-flex items-center gap-1 px-4 py-2 rounded-lg bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold whitespace-nowrap"
-                >
-                  <PlusCircle className="w-3.5 h-3.5" /> तयार करा
-                </button>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="pt-3 border-t border-slate-100 text-xs text-slate-500">
-            मुख्य Google Sheet बदलण्याचा किंवा नवीन तयार करण्याचा अधिकार फक्त{' '}
-            <span className="font-mono-tabular font-semibold">{CENTRAL_OWNER_EMAIL}</span> यांना आहे.
-          </div>
-        )}
       </div>
 
       {/* Quick Starter Seeds */}
-      <div className="bg-white p-5 rounded-xl border border-slate-200 space-y-3">
-        <div className="text-sm font-bold text-slate-900">प्रारंभिक डेटा सेटअप (Google Sheet मध्ये भरा)</div>
+      <div className="app-card app-card-body space-y-3">
+        <div className="app-section-title text-slate-900">प्रारंभिक डेटा सेटअप</div>
         <div className="flex flex-wrap gap-3">
           <button
             type="button"
             onClick={() => setConfirmAction('SEED_HIERARCHY')}
-            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-teal-800 bg-teal-50 border border-teal-200 rounded-lg hover:bg-teal-100 whitespace-nowrap"
+            className="app-btn-soft text-xs"
           >
             <Sparkles className="w-4 h-4" /> भादा नमुना उपकेंद्रे व गावे भरा
           </button>
           <button
             type="button"
             onClick={() => setConfirmAction('SEED_NIS')}
-            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-teal-800 bg-teal-50 border border-teal-200 rounded-lg hover:bg-teal-100 whitespace-nowrap"
+            className="app-btn-soft text-xs"
           >
             <Sparkles className="w-4 h-4" /> राष्ट्रीय लसीकरण वेळापत्रक (NIS) भरा
           </button>
@@ -321,64 +214,59 @@ export const SettingsPage: React.FC = () => {
           e.preventDefault();
           setConfirmAction('SETTINGS');
         }}
-        className="bg-white p-5 rounded-xl border border-slate-200 space-y-4"
+        className="app-card app-card-body space-y-4"
       >
-        <div className="text-sm font-bold text-slate-900">प्राथमिक आरोग्य केंद्र तपशील</div>
+        <div className="app-section-title text-slate-900">प्राथमिक आरोग्य केंद्र तपशील</div>
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">संस्थेचे नाव</label>
+            <label className="app-label">संस्थेचे नाव</label>
             <input
               required
               value={phcName}
               onChange={(e) => setPhcName(e.target.value)}
-              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+              className="app-input"
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">जिल्हा</label>
+            <label className="app-label">जिल्हा</label>
             <input
               required
               value={district}
               onChange={(e) => setDistrict(e.target.value)}
-              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+              className="app-input"
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">राज्य</label>
+            <label className="app-label">राज्य</label>
             <input
               required
               value={stateName}
               onChange={(e) => setStateName(e.target.value)}
-              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+              className="app-input"
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">
-              सत्रानंतर संपादन दिवस (IST)
-            </label>
+            <label className="app-label">सत्रानंतर संपादन दिवस (IST)</label>
             <input
               type="number"
               min={0}
               max={7}
               value={allowEditDays}
               onChange={(e) => setAllowEditDays(Number(e.target.value))}
-              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono-tabular"
+              className="app-input font-mono-tabular"
             />
           </div>
         </div>
-        <button
-          type="submit"
-          className="px-5 py-2 rounded-lg bg-teal-700 hover:bg-teal-800 text-white text-sm font-semibold whitespace-nowrap"
-        >
+        <button type="submit" className="app-btn-primary">
           सेटिंग्ज जतन करा
         </button>
       </form>
 
       {/* Admin Maternal ANC Service Master */}
-      <div className="bg-white p-5 rounded-xl border border-slate-200 space-y-4">
+      <div className="app-card app-card-body space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div>
-            <div className="flex items-center gap-2 text-sm font-bold text-slate-900">
+            <div className="app-section-title text-slate-900">
               <HeartPulse className="w-4 h-4 text-teal-700" />
               माता ANC व लसीकरण सेवा मास्टर (Configurable Maternal Services)
             </div>
@@ -389,15 +277,15 @@ export const SettingsPage: React.FC = () => {
           <button
             type="button"
             onClick={() => setConfirmAction('MATERNAL_CATALOG')}
-            className="px-4 py-2 rounded-lg bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold whitespace-nowrap shrink-0"
+            className="app-btn-primary text-xs"
           >
-            ANC सेवा यादी Google Sheet मध्ये जतन करा
+            ANC सेवा यादी जतन करा
           </button>
         </div>
 
-        <div className="overflow-x-auto border border-slate-200 rounded-lg">
-          <table className="w-full text-xs text-left">
-            <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
+        <div className="app-table-wrap rounded-lg">
+          <table className="app-table text-xs">
+            <thead className="app-thead">
               <tr>
                 <th className="px-3 py-2 font-semibold">सक्रिय</th>
                 <th className="px-3 py-2 font-semibold">सेवा कोड</th>
@@ -584,35 +472,33 @@ export const SettingsPage: React.FC = () => {
 
       {/* Excel Upload Confirmation */}
       {pendingUploadFile && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
-          role="dialog"
-          aria-modal="true"
-        >
-          <div className="w-full max-w-md bg-white rounded-xl border border-slate-200 shadow-xl p-5 space-y-4">
-            <h3 className="text-base font-bold text-slate-900">Google Sheet मध्ये Excel अपलोड करा</h3>
+        <div className="app-modal-backdrop" role="dialog" aria-modal="true">
+          <div className="app-modal max-w-md p-5 space-y-4">
+            <h3 className="text-base font-bold text-slate-900">प्रणालीत Excel डेटा अपलोड करा</h3>
             <p className="text-sm text-slate-700">
               फाइल: <span className="font-semibold">{pendingUploadFile.name}</span>. कृपया पद्धत निवडा:
             </p>
             <div className="space-y-2 text-sm">
-              <label className="flex items-center gap-2">
+              <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="radio"
                   checked={uploadMode === 'APPEND'}
                   onChange={() => setUploadMode('APPEND')}
+                  className="accent-teal-700"
                 />
                 <span>नवीन ओळी जोडा (Append)</span>
               </label>
-              <label className="flex items-center gap-2 text-rose-800">
+              <label className="flex items-center gap-2 text-rose-800 cursor-pointer">
                 <input
                   type="radio"
                   checked={uploadMode === 'REPLACE'}
                   onChange={() => setUploadMode('REPLACE')}
+                  className="accent-rose-700"
                 />
                 <span>जुना डेटा बदलून नवीन ठेवा (Replace)</span>
               </label>
             </div>
-            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
               <button
                 type="button"
                 disabled={busy}
@@ -620,7 +506,7 @@ export const SettingsPage: React.FC = () => {
                   setPendingUploadFile(null);
                   if (fileInputRef.current) fileInputRef.current.value = '';
                 }}
-                className="px-4 py-2 text-sm border border-slate-300 rounded-lg whitespace-nowrap"
+                className="app-btn-secondary"
               >
                 रद्द करा
               </button>
@@ -628,7 +514,7 @@ export const SettingsPage: React.FC = () => {
                 type="button"
                 disabled={busy}
                 onClick={handleConfirmUpload}
-                className="px-4 py-2 text-sm font-semibold text-white bg-teal-700 rounded-lg hover:bg-teal-800 whitespace-nowrap"
+                className="app-btn-primary"
               >
                 {busy ? 'अपलोड होत आहे...' : 'अपलोड करा'}
               </button>
@@ -641,13 +527,13 @@ export const SettingsPage: React.FC = () => {
         open={Boolean(confirmAction)}
         title={
           confirmAction === 'SHARE_ANYONE'
-            ? 'इतर Gmail लॉगिनसाठी Sheet शेअर करायचे का?'
-            : 'Google Sheet मध्ये बदल करायचे का?'
+            ? 'इतर कर्मचाऱ्यांसाठी डेटा प्रवेश सुरू करायचा का?'
+            : 'प्रणालीत बदल जतन करायचे का?'
         }
         description={
           confirmAction === 'SHARE_ANYONE'
-            ? `हे सुरू केल्यास कोणतेही कर्मचारी इतर Gmail ने लॉगिन करून थेट ${CENTRAL_OWNER_EMAIL} च्या या Google Sheet मध्ये डेटा जतन करू शकतील.`
-            : 'निवडलेली माहिती थेट तुमच्या Google Sheet मध्ये जतन केली जाईल.'
+            ? 'हे सुरू केल्यास अधिकृत कर्मचारी त्यांच्या खात्याने लॉगिन करून थेट केंद्रीय प्रणालीत डेटा जतन करू शकतील.'
+            : 'निवडलेली माहिती प्रणालीत जतन केली जाईल.'
         }
         loading={busy}
         onConfirm={handleConfirm}

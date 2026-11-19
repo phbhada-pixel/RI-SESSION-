@@ -69,16 +69,22 @@ export interface Beneficiary {
   id: string;
   beneficiaryCode: string; // e.g., PHCB-BEN-2026-0001 or PHCB-PW-2026-0001
   beneficiaryType: BeneficiaryType;
-  childName: string; // Permanent Full Name (Child Full Name or Woman Full Name)
+  childName: string; // Permanent Full Name (Child Full Name or Woman Full Name Marathi)
+  fullNameEnglish?: string; // Woman Full Name in English
   motherName: string;
   fatherName: string;
   guardianName?: string; // Parent/Guardian Name (Child) or Husband Name (Pregnant Woman)
+  husbandMobile?: string;
   dob: string; // ISO YYYY-MM-DD (required for Child, optional for Pregnant Woman)
   gender: BeneficiaryGender;
   mobile: string;
   aadhaarNumber?: string; // Optional 12-digit Aadhaar (masked in ordinary UI & PDF reports)
   caste?: string;
   category?: string;
+  bloodGroup?: string;
+  rhFactor?: string;
+  plannedDeliveryPlace?: string;
+  plannedHospitalName?: string;
   address: string;
   subcentreId: string;
   subcentreName: string;
@@ -96,6 +102,14 @@ export interface Beneficiary {
 export type DeliveryFacilityType = 'Government' | 'Private' | 'Other';
 export type PregnancyStatus = 'सक्रिय' | 'प्रसूती पूर्ण' | 'संदर्भित' | 'बंद';
 
+export interface EddHistoryEntry {
+  previousEddDate: string;
+  newEddDate: string;
+  changedAt: string;
+  changedBy: string;
+  reason?: string;
+}
+
 export interface PregnancyEpisode {
   id: string;
   episodeCode: string; // e.g., PHCB-PRG-2026-0001
@@ -109,8 +123,197 @@ export interface PregnancyEpisode {
   pregnancyRegistrationDate: string; // ISO YYYY-MM-DD
   pregnancyStatus: PregnancyStatus;
   gravidaPara?: string;
+  gravida?: number | null;
+  para?: number | null;
+  abortions?: number | null;
+  livingChildren?: number | null;
+  previousPregnancyHistory?: string;
+  previousCaesarean?: 'Yes' | 'No' | '';
+  previousComplications?: string;
+  bloodGroup?: string;
+  rhFactor?: string;
+  eddHistoryJson?: string;
+  isHighRisk?: boolean;
+  highRiskReasonsJson?: string;
+  currentHrpStatus?: string;
   outcomeDate?: string;
   notes?: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AncVisitRecord {
+  id: string;
+  visitNumber: number; // 1, 2, 3, 4, 5...
+  visitLabel: string; // e.g., ANC-1, ANC-2, ANC-3, ANC-4, Extra ANC-5
+  beneficiaryId: string;
+  beneficiaryCode: string;
+  pregnancyEpisodeId: string;
+  episodeCode: string;
+  sessionId?: string;
+  subcentreId: string;
+  subcentreName: string;
+  villageId: string;
+  villageName: string;
+  visitDate: string; // ISO YYYY-MM-DD
+  gestationalWeeks: number;
+  gestationalDays: number;
+  gestationalAgeText: string;
+  weightKg?: string;
+  heightCm?: string;
+  bp?: string; // e.g., 120/80
+  bpSystolic?: number | null;
+  bpDiastolic?: number | null;
+  hb?: string; // g/dL
+  bloodSugar?: string; // mg/dL
+  urineAlbumin?: string;
+  urineSugar?: string;
+  bloodTests?: string;
+  otherTests?: string;
+  doctorObservation?: string;
+  treatmentAdvice?: string;
+  nextVisitDate?: string;
+  staffId: string;
+  staffName: string;
+  staffDesignation?: string;
+  remarks?: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface HrpHistoryEntry {
+  status: 'YES' | 'NO';
+  reasons: string[];
+  otherReasonText?: string;
+  currentStatus: string;
+  changedAt: string;
+  changedBy: string;
+  note?: string;
+}
+
+export interface HighRiskRecord {
+  id: string;
+  beneficiaryId: string;
+  beneficiaryCode: string;
+  pregnancyEpisodeId: string;
+  episodeCode: string;
+  isHighRisk: 'YES' | 'NO';
+  identificationDate: string;
+  reasonsJson: string; // JSON array of selected HRP reasons
+  otherReasonText?: string;
+  doctorAdvice?: string;
+  treatmentInfo?: string;
+  referralRequired?: 'Yes' | 'No' | '';
+  referralDate?: string;
+  referralHospital?: string;
+  referralReason?: string;
+  followUpDate?: string;
+  followUpStatus?: string;
+  currentStatus?: string; // e.g., 'निरीक्षणाखाली', 'संदर्भित', 'स्थिर', 'प्रसूती पूर्ण'
+  statusHistoryJson?: string; // JSON array of HrpHistoryEntry
+  approvedByMO?: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MaternalReferralRecord {
+  id: string;
+  beneficiaryId: string;
+  beneficiaryCode: string;
+  pregnancyEpisodeId: string;
+  episodeCode: string;
+  highRiskRecordId?: string;
+  referralDate: string;
+  referredFrom: string;
+  referredToHospital: string;
+  referralReason: string;
+  transportArrangement?: string;
+  followUpDate?: string;
+  followUpStatus: 'प्रलंबित' | 'भेट पूर्ण' | 'दाखल' | 'बंद';
+  outcomeNotes?: string;
+  referredByStaff: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type DeliveryTypeOption = 'Normal Delivery' | 'LSCS' | 'Assisted Delivery' | 'Other';
+export type BabyBirthOutcome = 'Live Birth' | 'Stillbirth' | 'Other';
+
+export interface DeliveryRecord {
+  id: string;
+  beneficiaryId: string;
+  beneficiaryCode: string;
+  pregnancyEpisodeId: string;
+  episodeCode: string;
+  plannedEddDate?: string;
+  plannedDeliveryPlace?: string;
+  plannedHospitalName?: string;
+  deliveryPlanNotes?: string;
+  referralRequiredBeforeDelivery?: 'Yes' | 'No' | '';
+  actualDeliveryDate: string;
+  actualDeliveryPlace: string;
+  actualHospitalName?: string;
+  deliveryType: DeliveryTypeOption;
+  deliveryTypeOther?: string;
+  numberOfBabies: number;
+  motherCondition: string;
+  deliveryComplications?: string;
+  referralDetails?: string;
+  attendedByStaff: string;
+  isCompleted: boolean;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BabyRecord {
+  id: string;
+  babyCode: string; // e.g., PHCB-BABY-2026-0001
+  motherBeneficiaryId: string;
+  motherBeneficiaryCode: string;
+  pregnancyEpisodeId: string;
+  episodeCode: string;
+  deliveryRecordId: string;
+  babyNumber: number;
+  babyName: string;
+  gender: 'मुलगा' | 'मुलगी' | 'इतर';
+  birthWeightGrams?: number | null;
+  birthOutcome: BabyBirthOutcome;
+  birthOutcomeOther?: string;
+  babyCondition: string;
+  dob: string;
+  notes?: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PncRecord {
+  id: string;
+  visitNumber: number; // 1 = PNC-1, 2 = PNC-2, 3+ Extra
+  visitLabel: string; // e.g., PNC-1, PNC-2, Extra PNC-3
+  beneficiaryId: string;
+  beneficiaryCode: string;
+  pregnancyEpisodeId: string;
+  episodeCode: string;
+  deliveryRecordId?: string;
+  pncDate: string; // ISO YYYY-MM-DD
+  motherBp?: string;
+  motherHealthStatus: string;
+  bleedingStatus: string;
+  breastfeedingStatus: string;
+  babyWeightGrams?: number | null;
+  babyHealthStatus: string;
+  breastfeedingCounselling: 'Yes' | 'No' | '';
+  treatmentGiven?: string;
+  nextFollowUpDate?: string;
+  staffId: string;
+  staffName: string;
+  remarks?: string;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
@@ -264,6 +467,12 @@ export interface VaccinationRecord {
 export type AuditEntityType =
   | 'BENEFICIARY'
   | 'PREGNANCY_EPISODE'
+  | 'ANC_VISIT'
+  | 'HIGH_RISK'
+  | 'REFERRAL'
+  | 'DELIVERY'
+  | 'BABY'
+  | 'PNC'
   | 'SESSION'
   | 'VACCINATION'
   | 'MATERNAL_SERVICE'
@@ -289,6 +498,7 @@ export interface RiChecklist {
   checklistCode: string; // e.g., PHCB-RI-20261117-001
   sessionId?: string;
   sessionCode?: string;
+  checklistStaffName: string;
   monitorName: string;
   organization: 'WHO' | 'Govt' | 'UNICEF' | 'IPE' | 'Others';
   organizationOther?: string;
@@ -325,6 +535,7 @@ export interface RiChecklist {
   mobilizerMobilizing: 'Yes' | 'No' | 'Not Applicable' | '';
   polioHraTagged: 'Yes' | 'No' | 'Not Applicable' | '';
   vaccineDeliveredBy: 'ANM' | 'AVD' | 'Teeka Express' | 'Others' | '';
+  vaccineCarrierName: string;
   // Q8 & Q9
   vaccines: Record<string, RiVaccineStatusEntry>;
   logistics: Record<string, RiLogisticAvailability>;
@@ -394,6 +605,12 @@ export interface SheetDatabase {
   staff: StaffMember[];
   beneficiaries: Beneficiary[];
   pregnancyEpisodes: PregnancyEpisode[];
+  ancVisits: AncVisitRecord[];
+  highRiskRecords: HighRiskRecord[];
+  maternalReferrals: MaternalReferralRecord[];
+  deliveryRecords: DeliveryRecord[];
+  babyRecords: BabyRecord[];
+  pncRecords: PncRecord[];
   vaccinationSessions: VaccinationSession[];
   sessionBeneficiaries: SessionBeneficiary[];
   vaccineMaster: VaccineMaster[];

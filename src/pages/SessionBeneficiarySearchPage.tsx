@@ -1,12 +1,16 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle2, CheckSquare, PlusCircle, Search } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, CheckSquare, PlusCircle } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useSheetData } from '../context/SheetDataContext';
 import { Beneficiary } from '../types';
 import { formatDDMMYYYY, getSessionEditStatus } from '../utils/dateUtils';
 import { evaluateBeneficiaryEligibility } from '../utils/eligibilityEngine';
+import { fuzzyFilterAndRank } from '../utils/fuzzySearch';
+import { FuzzyAutocomplete } from '../components/FuzzyAutocomplete';
 import { SearchableSelect } from '../components/SearchableSelect';
 import { ConfirmModal } from '../components/ConfirmModal';
+import { EmptyState } from '../components/EmptyState';
+import { PageHeader } from '../components/PageHeader';
 import { Toast } from '../components/Toast';
 
 export const SessionBeneficiarySearchPage: React.FC = () => {
@@ -93,7 +97,7 @@ export const SessionBeneficiarySearchPage: React.FC = () => {
     );
   }, [db, selectedSession]);
 
-  const evaluatedList = useMemo(() => {
+  const baseEvaluatedList = useMemo(() => {
     if (!db || !selectedSession) return [];
     const recMap = new Map<string, typeof db.vaccinationRecords>();
     for (const r of db.vaccinationRecords) {
@@ -102,20 +106,12 @@ export const SessionBeneficiarySearchPage: React.FC = () => {
       recMap.set(r.beneficiaryId, arr);
     }
 
-    const q = searchQuery.trim().toLowerCase();
     return db.beneficiaries
       .filter(
         (b) =>
           b.status === 'सक्रिय' &&
           (b.beneficiaryType || 'CHILD') !== 'PREGNANT_WOMAN' &&
           b.villageId === selectedSession.villageId
-      )
-      .filter(
-        (b) =>
-          !q ||
-          b.childName.toLowerCase().includes(q) ||
-          b.beneficiaryCode.toLowerCase().includes(q) ||
-          b.mobile.includes(q)
       )
       .map((b) =>
         evaluateBeneficiaryEligibility(
@@ -126,7 +122,18 @@ export const SessionBeneficiarySearchPage: React.FC = () => {
         )
       )
       .filter((ev) => showAllVillageBeneficiaries || ev.isEligibleForSession);
-  }, [db, selectedSession, searchQuery, showAllVillageBeneficiaries]);
+  }, [db, selectedSession, showAllVillageBeneficiaries]);
+
+  const evaluatedList = useMemo(() => {
+    return fuzzyFilterAndRank(baseEvaluatedList, searchQuery, (ev) => [
+      ev.beneficiary.childName,
+      ev.beneficiary.beneficiaryCode,
+      ev.beneficiary.motherName,
+      ev.beneficiary.guardianName || ev.beneficiary.fatherName,
+      ev.beneficiary.mobile,
+      formatDDMMYYYY(ev.beneficiary.dob),
+    ]);
+  }, [baseEvaluatedList, searchQuery]);
 
   if (!db) return null;
 
@@ -149,13 +156,11 @@ export const SessionBeneficiarySearchPage: React.FC = () => {
   };
 
   return (
-    <div className="space-y-5">
-      <div>
-        <h2 className="text-xl font-bold text-slate-900">सत्रनिहाय लाभार्थी शोध</h2>
-        <p className="text-xs text-slate-500">
-          निवडलेल्या सत्राच्या तारखेनुसार लाभार्थ्याचे वय व देय लसीकरण पात्रता तपासा
-        </p>
-      </div>
+    <div className="app-page">
+      <PageHeader
+        title="सत्रनिहाय लाभार्थी शोध"
+        subtitle="निवडलेल्या सत्राच्या तारखेनुसार लाभार्थ्याचे वय व देय लसीकरण पात्रता तपासा"
+      />
 
       {validatedScheduleCount === 0 && (
         <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-sm flex items-start gap-2.5">
@@ -168,7 +173,7 @@ export const SessionBeneficiarySearchPage: React.FC = () => {
       )}
 
       {/* 4-Step Filter Panel */}
-      <div className="bg-white p-4 rounded-xl border border-slate-200 grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="app-card app-card-body grid grid-cols-1 md:grid-cols-4 gap-4">
         <SearchableSelect
           label="१. उपकेंद्र निवडा"
           disabled={Boolean(scopedSubcentre)}
@@ -195,7 +200,7 @@ export const SessionBeneficiarySearchPage: React.FC = () => {
         />
 
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">३. सत्र दिनांक</label>
+          <label className="app-label">३. सत्र दिनांक</label>
           <select
             disabled={!villageId}
             value={sessionDate}
@@ -203,7 +208,7 @@ export const SessionBeneficiarySearchPage: React.FC = () => {
               setSessionDate(e.target.value);
               setSessionId('');
             }}
-            className="w-full border border-slate-300 rounded-lg px-3 py-2.5 text-sm bg-white disabled:bg-slate-100"
+            className="app-input font-mono-tabular"
           >
             <option value="">दिनांक निवडा...</option>
             {availableDates.map((d) => (
@@ -215,12 +220,12 @@ export const SessionBeneficiarySearchPage: React.FC = () => {
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">४. लसीकरण सत्र निवडा</label>
+          <label className="app-label">४. लसीकरण सत्र निवडा</label>
           <select
             disabled={!sessionDate}
             value={sessionId}
             onChange={(e) => setSessionId(e.target.value)}
-            className="w-full border border-slate-300 rounded-lg px-3 py-2.5 text-sm bg-white disabled:bg-slate-100"
+            className="app-input"
           >
             <option value="">सत्र निवडा...</option>
             {matchingSessions.map((s) => (
@@ -233,7 +238,7 @@ export const SessionBeneficiarySearchPage: React.FC = () => {
       </div>
 
       {selectedSession && sessionEditStatus && (
-        <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3 text-sm">
+        <div className="app-card p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3 text-sm">
           <div className="space-y-0.5">
             <div className="font-semibold text-slate-900">
               सत्र: <span className="font-mono-tabular text-teal-800">{selectedSession.sessionCode}</span> ·{' '}
@@ -253,10 +258,7 @@ export const SessionBeneficiarySearchPage: React.FC = () => {
             >
               {sessionEditStatus.labelMarathi} · {sessionEditStatus.remainingText}
             </span>
-            <Link
-              to={`/tick-sheet?sessionId=${selectedSession.id}`}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold whitespace-nowrap"
-            >
+            <Link to={`/tick-sheet?sessionId=${selectedSession.id}`} className="app-btn-primary">
               <CheckSquare className="w-4 h-4" /> टिकमार्क शीट उघडा
             </Link>
           </div>
@@ -265,22 +267,36 @@ export const SessionBeneficiarySearchPage: React.FC = () => {
 
       {/* Step 5: Eligible Beneficiaries List */}
       {selectedSession && (
-        <div className="bg-white p-4 rounded-xl border border-slate-200 space-y-4">
+        <div className="app-card app-card-body space-y-4">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-            <div className="relative flex-1 max-w-md">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-              <input
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="नाव, आयडी किंवा मोबाईलद्वारे शोधा..."
-                className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-lg text-sm"
-              />
-            </div>
+            <FuzzyAutocomplete
+              className="flex-1 max-w-md"
+              value={searchQuery}
+              onChange={setSearchQuery}
+              items={baseEvaluatedList}
+              getSearchFields={(ev) => [
+                ev.beneficiary.childName,
+                ev.beneficiary.beneficiaryCode,
+                ev.beneficiary.motherName,
+                ev.beneficiary.guardianName || ev.beneficiary.fatherName,
+                ev.beneficiary.mobile,
+                formatDDMMYYYY(ev.beneficiary.dob),
+              ]}
+              getOptionKey={(ev) => ev.beneficiary.id}
+              getOptionLabel={(ev) => ev.beneficiary.childName}
+              getOptionSublabel={(ev) =>
+                `आई: ${ev.beneficiary.motherName || '-'} · ${ev.ageOnTargetDateLabel} · ${ev.beneficiary.mobile}`
+              }
+              getOptionMeta={(ev) => ev.beneficiary.beneficiaryCode}
+              onSelectItem={(ev) => setSearchQuery(ev.beneficiary.beneficiaryCode)}
+              placeholder="नाव, आयडी किंवा मोबाईलद्वारे शोधा..."
+            />
             <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
               <input
                 type="checkbox"
                 checked={showAllVillageBeneficiaries}
                 onChange={(e) => setShowAllVillageBeneficiaries(e.target.checked)}
+                className="accent-teal-700"
               />
               गावातील सर्व लाभार्थी दाखवा (पात्र नसलेल्यांसह)
             </label>
@@ -288,18 +304,16 @@ export const SessionBeneficiarySearchPage: React.FC = () => {
 
           <div className="overflow-x-auto">
             {evaluatedList.length === 0 ? (
-              <div className="p-8 text-center text-sm text-slate-500">
-                या सत्राच्या तारखेला पात्र असलेले कोणतेही लाभार्थी आढळले नाहीत.
-              </div>
+              <EmptyState message="या सत्राच्या तारखेला पात्र असलेले कोणतेही लाभार्थी आढळले नाहीत." />
             ) : (
-              <table className="w-full text-sm text-left">
-                <thead className="bg-slate-50 text-slate-600 text-xs border-b border-slate-200">
+              <table className="app-table">
+                <thead className="app-thead">
                   <tr>
-                    <th className="px-3 py-2.5 font-semibold">लाभार्थी</th>
-                    <th className="px-3 py-2.5 font-semibold">जन्मतारीख व सत्र दिनांकाचे वय</th>
+                    <th className="px-3 py-2.5 font-semibold whitespace-nowrap">लाभार्थी</th>
+                    <th className="px-3 py-2.5 font-semibold whitespace-nowrap">जन्मतारीख व सत्र दिनांकाचे वय</th>
                     <th className="px-3 py-2.5 font-semibold">आधी दिलेले डोस</th>
                     <th className="px-3 py-2.5 font-semibold">या सत्रात देय डोस</th>
-                    <th className="px-3 py-2.5 font-semibold text-right">सत्रात जोडा</th>
+                    <th className="px-3 py-2.5 font-semibold text-right whitespace-nowrap">सत्रात जोडा</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -337,7 +351,7 @@ export const SessionBeneficiarySearchPage: React.FC = () => {
                               type="button"
                               disabled={!sessionEditStatus?.isOpen}
                               onClick={() => setConfirmBen(ev.beneficiary)}
-                              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold disabled:opacity-40"
+                              className="app-btn-primary px-3 py-1.5"
                             >
                               <PlusCircle className="w-3.5 h-3.5" /> सत्रात जोडा
                             </button>

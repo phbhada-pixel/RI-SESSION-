@@ -7,6 +7,8 @@ import { formatDDMMYYYY, getSessionEditStatus } from '../utils/dateUtils';
 import { evaluateBeneficiaryEligibility } from '../utils/eligibilityEngine';
 import { exportToExcel, exportToPDF } from '../utils/exportUtils';
 import { ConfirmModal } from '../components/ConfirmModal';
+import { EmptyState } from '../components/EmptyState';
+import { PageHeader } from '../components/PageHeader';
 import { Toast } from '../components/Toast';
 
 interface PendingTickSelection {
@@ -130,7 +132,7 @@ export const VaccinationTickMarkSheetPage: React.FC = () => {
       setSelectedTicks({});
       setConfirmSaveOpen(false);
       setToast({
-        msg: `${pendingEntries.length} लसीकरण डोस Google Sheet मध्ये यशस्वीरित्या नोंदवले गेले.`,
+        msg: `${pendingEntries.length} लसीकरण डोस यशस्वीरित्या नोंदवले गेले.`,
         type: 'success',
       });
     } catch (err) {
@@ -184,17 +186,13 @@ export const VaccinationTickMarkSheetPage: React.FC = () => {
   };
 
   return (
-    <div className="space-y-5">
-      <div className="no-print flex flex-col md:flex-row md:items-center justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-bold text-slate-900">लसीकरण टिकमार्क शीट</h2>
-          <p className="text-xs text-slate-500">
-            सत्रातील समाविष्ट लाभार्थ्यांना देय डोसवर टिकमार्क करून थेट Google Sheet मध्ये नोंदवा
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          {selectedSession && (
+    <div className="app-page">
+      <PageHeader
+        noPrint
+        title="लसीकरण टिकमार्क शीट"
+        subtitle="सत्रातील समाविष्ट लाभार्थ्यांना देय डोसवर टिकमार्क करून थेट नोंदवा"
+        actions={
+          selectedSession ? (
             <>
               <button
                 type="button"
@@ -207,7 +205,7 @@ export const VaccinationTickMarkSheetPage: React.FC = () => {
                     rows
                   );
                 }}
-                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium bg-white border border-slate-300 rounded-lg hover:bg-slate-50 whitespace-nowrap"
+                className="app-btn-secondary"
               >
                 <Download className="w-4 h-4" /> Excel
               </button>
@@ -223,14 +221,14 @@ export const VaccinationTickMarkSheetPage: React.FC = () => {
                     rows
                   );
                 }}
-                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium bg-white border border-slate-300 rounded-lg hover:bg-slate-50 whitespace-nowrap"
+                className="app-btn-secondary"
               >
                 <Download className="w-4 h-4" /> PDF
               </button>
               <button
                 type="button"
                 onClick={() => window.print()}
-                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium bg-white border border-slate-300 rounded-lg hover:bg-slate-50 whitespace-nowrap"
+                className="app-btn-secondary"
               >
                 <Printer className="w-4 h-4" /> प्रिंट रजिस्टर
               </button>
@@ -238,19 +236,19 @@ export const VaccinationTickMarkSheetPage: React.FC = () => {
                 type="button"
                 disabled={!editStatus?.isOpen || pendingEntries.length === 0}
                 onClick={() => setConfirmSaveOpen(true)}
-                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-teal-700 rounded-lg hover:bg-teal-800 disabled:opacity-40 whitespace-nowrap"
+                className="app-btn-primary"
               >
                 <Save className="w-4 h-4" /> निवडलेले डोस जतन करा ({pendingEntries.length})
               </button>
             </>
-          )}
-        </div>
-      </div>
+          ) : undefined
+        }
+      />
 
       {/* Session Selector */}
-      <div className="no-print bg-white p-4 rounded-xl border border-slate-200 flex flex-col md:flex-row md:items-end gap-4">
+      <div className="no-print app-card app-card-body flex flex-col md:flex-row md:items-end gap-4">
         <div className="flex-1 max-w-xl">
-          <label className="block text-xs font-medium text-slate-700 mb-1">लसीकरण सत्र निवडा</label>
+          <label className="app-label">लसीकरण सत्र निवडा</label>
           <select
             value={sessionId}
             onChange={(e) => {
@@ -258,7 +256,7 @@ export const VaccinationTickMarkSheetPage: React.FC = () => {
               setParams(e.target.value ? { sessionId: e.target.value } : {});
               setSelectedTicks({});
             }}
-            className="w-full border border-slate-300 rounded-lg px-3 py-2.5 text-sm bg-white"
+            className="app-input"
           >
             <option value="">-- सत्र निवडा --</option>
             {availableSessions.map((s) => (
@@ -270,17 +268,14 @@ export const VaccinationTickMarkSheetPage: React.FC = () => {
         </div>
 
         {selectedSession && (
-          <Link
-            to={`/session-search?sessionId=${selectedSession.id}`}
-            className="inline-flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold text-teal-800 bg-teal-50 border border-teal-200 rounded-lg hover:bg-teal-100 whitespace-nowrap"
-          >
+          <Link to={`/session-search?sessionId=${selectedSession.id}`} className="app-btn-soft">
             <Search className="w-4 h-4" /> सत्रात आणखी लाभार्थी जोडा
           </Link>
         )}
       </div>
 
       {selectedSession && editStatus && (
-        <div className="bg-white p-4 rounded-xl border border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-2 text-sm">
+        <div className="app-card p-4 flex flex-col md:flex-row md:items-center justify-between gap-2 text-sm">
           <div>
             <span className="font-bold text-slate-900">प्राथमिक आरोग्य केंद्र भादा</span> · उपकेंद्र:{' '}
             {selectedSession.subcentreName} · गाव: {selectedSession.villageName} · दिनांक:{' '}
@@ -300,7 +295,7 @@ export const VaccinationTickMarkSheetPage: React.FC = () => {
 
       {/* Default Batch Number Bar */}
       {selectedSession && rosterRows.length > 0 && editStatus?.isOpen && (
-        <div className="no-print bg-white p-3 rounded-xl border border-slate-200 space-y-2">
+        <div className="no-print app-card p-3 space-y-2">
           <div className="text-xs font-semibold text-slate-700">
             डोसनुसार बॅच क्रमांक (ऐच्छिक — सर्व निवडलेल्या लाभार्थ्यांसाठी लागू):
           </div>
@@ -324,20 +319,19 @@ export const VaccinationTickMarkSheetPage: React.FC = () => {
 
       {/* Tick-Mark Matrix */}
       {selectedSession && (
-        <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto">
+        <div className="app-table-wrap">
           {rosterRows.length === 0 ? (
-            <div className="p-8 text-center text-sm text-slate-500 space-y-3">
-              <div>या सत्रात अद्याप कोणताही लाभार्थी जोडलेला नाही.</div>
-              <Link
-                to={`/session-search?sessionId=${selectedSession.id}`}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-teal-700 text-white text-xs font-semibold"
-              >
-                <Search className="w-4 h-4" /> सत्रनिहाय लाभार्थी शोध मधून जोडा
-              </Link>
-            </div>
+            <EmptyState
+              message="या सत्रात अद्याप कोणताही लाभार्थी जोडलेला नाही."
+              action={
+                <Link to={`/session-search?sessionId=${selectedSession.id}`} className="app-btn-primary">
+                  <Search className="w-4 h-4" /> सत्रनिहाय लाभार्थी शोध मधून जोडा
+                </Link>
+              }
+            />
           ) : (
             <table className="w-full text-xs text-left border-collapse">
-              <thead className="bg-slate-50 text-slate-700 border-b border-slate-200">
+              <thead className="app-thead">
                 <tr>
                   <th className="px-2 py-2.5 font-semibold text-center border-r border-slate-200">
                     अ.क्र.
@@ -454,7 +448,7 @@ export const VaccinationTickMarkSheetPage: React.FC = () => {
 
       <ConfirmModal
         open={confirmSaveOpen}
-        title="निवडलेले लसीकरण डोस Google Sheet मध्ये नोंदवायचे का?"
+        title="निवडलेले लसीकरण डोस नोंदवायचे का?"
         description={`दिनांक ${formatDDMMYYYY(selectedSession?.sessionDate)} रोजी दिलेले खालील ${pendingEntries.length} डोस कायमस्वरूपी नोंदवले जातील:`}
         details={pendingEntries.map(
           (e) =>

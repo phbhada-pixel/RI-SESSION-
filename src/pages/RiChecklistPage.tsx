@@ -6,7 +6,7 @@ import {
   Download,
   Edit,
   FileSpreadsheet,
-  ListChecks,
+  Lock,
   PlusCircle,
   Save,
   ShieldCheck,
@@ -18,7 +18,7 @@ import {
   RiLogisticAvailability,
   RiVaccineStatusEntry,
 } from '../types';
-import { formatDDMMYYYY, getTodayIST } from '../utils/dateUtils';
+import { formatDDMMYYYY, getSessionEditStatus, getTodayIST } from '../utils/dateUtils';
 import { formatNumberIN } from '../utils/localeUtils';
 import {
   RI_4_KEY_MESSAGES,
@@ -38,6 +38,8 @@ import {
   exportRiChecklistExcel,
 } from '../utils/riChecklistUtils';
 import { ConfirmModal } from '../components/ConfirmModal';
+import { EmptyState } from '../components/EmptyState';
+import { PageHeader } from '../components/PageHeader';
 import { Toast } from '../components/Toast';
 
 type ViewTab = 'FORM' | 'HISTORY';
@@ -59,6 +61,7 @@ export const RiChecklistPage: React.FC = () => {
 
   // Header & Site Metadata
   const [sessionId, setSessionId] = useState(preselectedSessionId);
+  const [checklistStaffName, setChecklistStaffName] = useState(currentUser?.name || '');
   const [monitorName, setMonitorName] = useState(currentUser?.name || '');
   const [organization, setOrganization] = useState<RiChecklist['organization']>('Govt');
   const [organizationOther, setOrganizationOther] = useState('');
@@ -95,6 +98,7 @@ export const RiChecklistPage: React.FC = () => {
   const [polioHraTagged, setPolioHraTagged] = useState<RiChecklist['polioHraTagged']>('No');
   const [vaccineDeliveredBy, setVaccineDeliveredBy] =
     useState<RiChecklist['vaccineDeliveredBy']>('ANM');
+  const [vaccineCarrierName, setVaccineCarrierName] = useState('');
 
   // Q8 & Q9
   const [vaccines, setVaccines] = useState<Record<string, RiVaccineStatusEntry>>(() =>
@@ -179,6 +183,13 @@ export const RiChecklistPage: React.FC = () => {
     } else if (ses.location.includes('अंगणवाडी') || ses.location.toLowerCase().includes('icds')) {
       setSessionSiteLocation('ICDS Centre');
     }
+    if (ses.anmName) {
+      setVaccineDeliveredBy('ANM');
+      setVaccineCarrierName(ses.anmName);
+    }
+    if (!checklistStaffName.trim()) {
+      setChecklistStaffName(currentUser?.name || ses.choName || ses.anmName || '');
+    }
   };
 
   useEffect(() => {
@@ -209,11 +220,47 @@ export const RiChecklistPage: React.FC = () => {
       .filter((c) => !historyFilterSc || c.subcentreId === historyFilterSc);
   }, [db, scopedSubcentre, historyFilterSc]);
 
+  const activeStaffOptions = useMemo(() => {
+    if (!db) return [];
+    const active = db.staff.filter((s) => s.isActive);
+    if (!subcentreId) return active;
+    return [
+      ...active.filter((s) => s.subcentreId === subcentreId),
+      ...active.filter((s) => s.subcentreId !== subcentreId),
+    ];
+  }, [db, subcentreId]);
+
+  const checklistBySessionId = useMemo(() => {
+    const map = new Map<string, RiChecklist>();
+    if (!db) return map;
+    for (const c of db.riChecklists) {
+      if (c.sessionId && !map.has(c.sessionId)) {
+        map.set(c.sessionId, c);
+      }
+    }
+    return map;
+  }, [db]);
+
+  const existingChecklistForSelectedSession = useMemo(() => {
+    if (editItem || !sessionId) return null;
+    return checklistBySessionId.get(sessionId) || null;
+  }, [editItem, sessionId, checklistBySessionId]);
+
+  const selectedLinkedSession = useMemo(() => {
+    if (!db || !sessionId) return null;
+    return db.vaccinationSessions.find((s) => s.id === sessionId) || null;
+  }, [db, sessionId]);
+
+  const isLinkedSessionClosed = Boolean(
+    selectedLinkedSession && !getSessionEditStatus(selectedLinkedSession).isOpen
+  );
+
   if (!db) return null;
 
   const resetForm = () => {
     setEditItem(null);
     setSessionId('');
+    setChecklistStaffName(currentUser?.name || '');
     setMonitorName(currentUser?.name || '');
     setOrganization('Govt');
     setOrganizationOther('');
@@ -237,6 +284,7 @@ export const RiChecklistPage: React.FC = () => {
     setMobilizerMobilizing('Yes');
     setPolioHraTagged('No');
     setVaccineDeliveredBy('ANM');
+    setVaccineCarrierName('');
     setVaccines(buildDefaultRiVaccines());
     setLogistics(buildDefaultRiLogistics());
     setCuttingWithHubCutter('Yes');
@@ -264,8 +312,19 @@ export const RiChecklistPage: React.FC = () => {
   };
 
   const loadForEdit = (c: RiChecklist) => {
+    const linked = c.sessionId
+      ? db.vaccinationSessions.find((s) => s.id === c.sessionId) || null
+      : null;
+    if (linked && !getSessionEditStatus(linked).isOpen) {
+      setToast({
+        msg: `संलग्न सत्र (${linked.sessionCode}) बंद/पूर्ण झाल्यामुळे या चेकलिस्टमध्ये संपादन बंद आहे.`,
+        type: 'error',
+      });
+      return;
+    }
     setEditItem(c);
     setSessionId(c.sessionId || '');
+    setChecklistStaffName(c.checklistStaffName || c.monitorName || c.createdBy || '');
     setMonitorName(c.monitorName);
     setOrganization(c.organization);
     setOrganizationOther(c.organizationOther || '');
@@ -293,6 +352,7 @@ export const RiChecklistPage: React.FC = () => {
     setMobilizerMobilizing(c.mobilizerMobilizing);
     setPolioHraTagged(c.polioHraTagged);
     setVaccineDeliveredBy(c.vaccineDeliveredBy);
+    setVaccineCarrierName(c.vaccineCarrierName || '');
     setVaccines({ ...buildDefaultRiVaccines(), ...(c.vaccines || {}) });
     setLogistics({ ...buildDefaultRiLogistics(), ...(c.logistics || {}) });
     setCuttingWithHubCutter(c.cuttingWithHubCutter);
@@ -356,6 +416,7 @@ export const RiChecklistPage: React.FC = () => {
         id: editItem?.id,
         sessionId: ses?.id || '',
         sessionCode: ses?.sessionCode || '',
+        checklistStaffName: checklistStaffName.trim(),
         monitorName: monitorName.trim(),
         organization,
         organizationOther: organizationOther.trim(),
@@ -384,6 +445,7 @@ export const RiChecklistPage: React.FC = () => {
         mobilizerMobilizing,
         polioHraTagged,
         vaccineDeliveredBy,
+        vaccineCarrierName: vaccineCarrierName.trim(),
         vaccines,
         logistics,
         cuttingWithHubCutter,
@@ -413,8 +475,8 @@ export const RiChecklistPage: React.FC = () => {
       });
       setToast({
         msg: editItem
-          ? `RI चेकलिस्ट (${saved.checklistCode}) Google Sheet मध्ये अद्यतनित झाली.`
-          : `नवीन RI चेकलिस्ट (${saved.checklistCode}) Google Sheet मध्ये जतन झाली.`,
+          ? `RI चेकलिस्ट (${saved.checklistCode}) अद्यतनित झाली.`
+          : `नवीन RI चेकलिस्ट (${saved.checklistCode}) जतन झाली.`,
         type: 'success',
       });
       setConfirmSaveOpen(false);
@@ -444,57 +506,68 @@ export const RiChecklistPage: React.FC = () => {
   };
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-            <ListChecks className="w-5 h-5 text-teal-700" />
-            नियमित लसीकरण सत्र निरीक्षण तपासणी यादी (RI Checklist)
-          </h2>
-          <p className="text-xs text-slate-500">
-            Session Monitoring Format · सुधारित आवृत्ती: JE Diluent काढलेला (JE विना-डायल्युएंट उपलब्ध) · PCV आणि IPV लसींचा समावेश
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              resetForm();
-              setViewTab('FORM');
-            }}
-            className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold border whitespace-nowrap ${
-              viewTab === 'FORM'
-                ? 'bg-teal-700 text-white border-teal-700'
-                : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
-            }`}
-          >
-            <PlusCircle className="w-4 h-4" />
-            {editItem ? `संपादन: ${editItem.checklistCode}` : 'नवीन चेकलिस्ट भरा'}
-          </button>
-          <button
-            type="button"
-            onClick={() => setViewTab('HISTORY')}
-            className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold border whitespace-nowrap ${
-              viewTab === 'HISTORY'
-                ? 'bg-teal-700 text-white border-teal-700'
-                : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
-            }`}
-          >
-            <ClipboardCheck className="w-4 h-4" />
-            जतन केलेल्या याद्या ({formatNumberIN(visibleChecklists.length)})
-          </button>
-        </div>
-      </div>
+    <div className="app-page">
+      <PageHeader
+        title="नियमित लसीकरण सत्र निरीक्षण तपासणी यादी (RI Checklist)"
+        subtitle="Session Monitoring Format · सुधारित आवृत्ती: JE Diluent काढलेला (JE विना-डायल्युएंट उपलब्ध) · PCV आणि IPV लसींचा समावेश"
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                resetForm();
+                setViewTab('FORM');
+              }}
+              className={viewTab === 'FORM' ? 'app-btn-primary text-xs' : 'app-btn-secondary text-xs'}
+            >
+              <PlusCircle className="w-4 h-4" />
+              {editItem ? `संपादन: ${editItem.checklistCode}` : 'नवीन चेकलिस्ट भरा'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewTab('HISTORY')}
+              className={viewTab === 'HISTORY' ? 'app-btn-primary text-xs' : 'app-btn-secondary text-xs'}
+            >
+              <ClipboardCheck className="w-4 h-4" />
+              जतन केलेल्या याद्या ({formatNumberIN(visibleChecklists.length)})
+            </button>
+          </div>
+        }
+      />
 
       {viewTab === 'FORM' ? (
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            if (!monitorName.trim() || !subcentreId || !sessionSiteName.trim()) {
+            if (isLinkedSessionClosed) {
               setToast({
-                msg: 'कृपया निरीक्षकाचे नाव, उपकेंद्र आणि सत्र ठिकाण (गाव) भरा.',
+                msg: `हे लसीकरण सत्र बंद/पूर्ण (${selectedLinkedSession?.status}) असल्यामुळे नवीन चेकलिस्ट भरता किंवा संपादित करता येणार नाही.`,
+                type: 'error',
+              });
+              return;
+            }
+            if (existingChecklistForSelectedSession) {
+              setToast({
+                msg: `या लसीकरण सत्रासाठी आधीच RI चेकलिस्ट (${existingChecklistForSelectedSession.checklistCode}) भरलेली आहे. एका सत्रासाठी फक्त एकच चेकलिस्ट भरता येते.`,
+                type: 'error',
+              });
+              return;
+            }
+            if (
+              !checklistStaffName.trim() ||
+              !monitorName.trim() ||
+              !subcentreId ||
+              !sessionSiteName.trim()
+            ) {
+              setToast({
+                msg: 'कृपया चेकलिस्ट करणाऱ्या कर्मचाऱ्याचे नाव, निरीक्षकाचे नाव, उपकेंद्र आणि सत्र ठिकाण (गाव) भरा.',
+                type: 'error',
+              });
+              return;
+            }
+            if (isSessionHeld === 'Yes' && !vaccineCarrierName.trim()) {
+              setToast({
+                msg: 'कृपया प्र. ७ ब मध्ये लस वाहतूक करणाऱ्या व्यक्तीचे / कर्मचाऱ्याचे नाव भरा.',
                 type: 'error',
               });
               return;
@@ -525,32 +598,143 @@ export const RiChecklistPage: React.FC = () => {
               )}
             </div>
 
-            <div className="p-3 bg-teal-50/50 border border-teal-200 rounded-lg">
-              <label className="block text-xs font-bold text-teal-900 mb-1">
-                विद्यमान लसीकरण सत्राशी जोडा (ऐच्छिक · स्वयंचलित माहिती भरण्यासाठी)
+            <div className="p-3 bg-teal-50/50 border border-teal-200 rounded-lg space-y-2">
+              <label className="block text-xs font-bold text-teal-900">
+                लसीकरण सत्राशी जोडा (एका सत्रासाठी फक्त १ चेकलिस्ट परवानगी)
               </label>
               <select
                 value={sessionId}
+                disabled={Boolean(editItem)}
                 onChange={(e) => applySessionPrefill(e.target.value)}
-                className="w-full md:max-w-xl bg-white border border-teal-300 rounded-lg px-3 py-2 text-sm"
+                className="w-full md:max-w-2xl bg-white border border-teal-300 rounded-lg px-3 py-2 text-sm disabled:bg-slate-100"
               >
                 <option value="">-- स्वतंत्र सत्र केंद्र / सत्र निवडलेले नाही --</option>
-                {visibleSessions.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.sessionCode} · {formatDDMMYYYY(s.sessionDate)} · {s.subcentreName} ·{' '}
-                    {s.villageName} ({s.location})
-                  </option>
-                ))}
+                {visibleSessions.map((s) => {
+                  const existingRi = checklistBySessionId.get(s.id);
+                  return (
+                    <option key={s.id} value={s.id}>
+                      {s.sessionCode} · {formatDDMMYYYY(s.sessionDate)} · {s.subcentreName} ·{' '}
+                      {s.villageName} ({s.location}) —{' '}
+                      {existingRi ? `चेकलिस्ट पूर्ण (${existingRi.checklistCode})` : 'प्रलंबित'}
+                    </option>
+                  );
+                })}
               </select>
+
+              {existingChecklistForSelectedSession && (
+                <div className="p-4 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 space-y-3">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+                    <div className="space-y-1 text-xs">
+                      <div className="text-sm font-bold text-amber-900">
+                        या लसीकरण सत्रासाठी आधीच RI चेकलिस्ट भरलेली आहे (कोड:{' '}
+                        {existingChecklistForSelectedSession.checklistCode})
+                      </div>
+                      <p className="text-amber-900">
+                        <strong>नियम:</strong> एका लसीकरण सत्रासाठी फक्त एकच RI चेकलिस्ट भरण्याची परवानगी आहे. नवीन दुसरी चेकलिस्ट नोंदवता येणार नाही.
+                      </p>
+                      <div className="text-amber-800 pt-0.5">
+                        दिनांक: {formatDDMMYYYY(existingChecklistForSelectedSession.monitoringDate)} ·
+                        चेकलिस्ट कर्मचारी:{' '}
+                        {existingChecklistForSelectedSession.checklistStaffName ||
+                          existingChecklistForSelectedSession.monitorName}{' '}
+                        · निरीक्षक: {existingChecklistForSelectedSession.monitorName} · लस वाहतूक:{' '}
+                        {existingChecklistForSelectedSession.vaccineDeliveredBy}
+                        {existingChecklistForSelectedSession.vaccineCarrierName
+                          ? ` (${existingChecklistForSelectedSession.vaccineCarrierName})`
+                          : ''}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                    {!isLinkedSessionClosed && (
+                      <button
+                        type="button"
+                        onClick={() => loadForEdit(existingChecklistForSelectedSession)}
+                        className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold"
+                      >
+                        <Edit className="w-3.5 h-3.5" /> विद्यमान चेकलिस्ट पहा / संपादित करा
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      disabled={pdfBusyId === existingChecklistForSelectedSession.id}
+                      onClick={() => handleDownloadPdf(existingChecklistForSelectedSession)}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-slate-800 text-xs font-semibold"
+                    >
+                      <Download className="w-3.5 h-3.5" /> PDF डाउनलोड
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        exportRiChecklistExcel(existingChecklistForSelectedSession);
+                        setToast({
+                          msg: `RI Checklist Excel (${existingChecklistForSelectedSession.checklistCode}) डाउनलोड झाला.`,
+                          type: 'success',
+                        });
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-emerald-800 text-xs font-semibold"
+                    >
+                      <FileSpreadsheet className="w-3.5 h-3.5" /> Excel डाउनलोड
+                    </button>
+                    <button
+                      type="button"
+                      onClick={resetForm}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-amber-400 text-amber-900 hover:bg-amber-100 text-xs font-medium"
+                    >
+                      दुसरे सत्र निवडा
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {isLinkedSessionClosed && !existingChecklistForSelectedSession && (
+                <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-950 flex items-start gap-2.5 text-xs">
+                  <Lock className="w-4 h-4 text-rose-700 shrink-0 mt-0.5" />
+                  <div className="space-y-0.5">
+                    <div className="font-bold text-rose-900">
+                      हे लसीकरण सत्र बंद / पूर्ण ({selectedLinkedSession?.status}) झालेले आहे
+                    </div>
+                    <p>
+                      सत्र बंद केल्यानंतर त्या सत्रासाठी नवीन RI चेकलिस्ट भरता किंवा बदलता येणार नाही. फक्त जतन केलेल्या याद्या पाहता व डाउनलोड करता येतील.
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
 
+            {!existingChecklistForSelectedSession && !isLinkedSessionClosed && (
+              <>
+            <datalist id="ri-active-staff-list">
+              {activeStaffOptions.map((s) => (
+                <option key={s.id} value={s.name}>
+                  {s.name} ({s.designation}
+                  {s.subcentreName ? ` · ${s.subcentreName}` : ''})
+                </option>
+              ))}
+            </datalist>
+
             <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4 text-sm">
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  चेकलिस्ट करणारा कर्मचारी नाव *
+                </label>
+                <input
+                  required
+                  list="ri-active-staff-list"
+                  value={checklistStaffName}
+                  onChange={(e) => setChecklistStaffName(e.target.value)}
+                  placeholder="कर्मचाऱ्याचे नाव निवडा किंवा लिहा"
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
               <div>
                 <label className="block text-xs font-medium text-slate-700 mb-1">
                   निरीक्षकाचे नाव (Name of Monitor) *
                 </label>
                 <input
                   required
+                  list="ri-active-staff-list"
                   value={monitorName}
                   onChange={(e) => setMonitorName(e.target.value)}
                   className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
@@ -783,8 +967,12 @@ export const RiChecklistPage: React.FC = () => {
                 )}
               </div>
             </div>
+              </>
+            )}
           </div>
 
+          {!existingChecklistForSelectedSession && !isLinkedSessionClosed && (
+            <>
           {/* Section B: Q1 Session Held */}
           <div className="bg-white p-5 rounded-xl border border-slate-200 space-y-3">
             <h3 className="text-sm font-bold text-slate-900">
@@ -945,15 +1133,25 @@ export const RiChecklistPage: React.FC = () => {
 
                   <div>
                     <label className="block font-semibold text-slate-800 mb-1">
-                      7. Who delivered vaccine / logistics to the site?
+                      7. लस व लॉजिस्टिक्स वाहतूक कोणी केली? (Delivery Mode)
                     </label>
                     <select
                       value={vaccineDeliveredBy}
-                      onChange={(e) =>
-                        setVaccineDeliveredBy(
-                          e.target.value as RiChecklist['vaccineDeliveredBy']
-                        )
-                      }
+                      onChange={(e) => {
+                        const mode = e.target.value as RiChecklist['vaccineDeliveredBy'];
+                        setVaccineDeliveredBy(mode);
+                        if (mode === 'ANM' && !vaccineCarrierName.trim()) {
+                          const ses = db.vaccinationSessions.find((s) => s.id === sessionId);
+                          const scAnm = db.staff.find(
+                            (st) =>
+                              st.isActive &&
+                              st.subcentreId === subcentreId &&
+                              st.designation === 'ANM'
+                          );
+                          const suggested = ses?.anmName || scAnm?.name || '';
+                          if (suggested) setVaccineCarrierName(suggested);
+                        }
+                      }}
                       className="w-full border border-slate-300 rounded-lg px-3 py-2 bg-white"
                     >
                       <option value="ANM">ANM</option>
@@ -961,6 +1159,20 @@ export const RiChecklistPage: React.FC = () => {
                       <option value="Teeka Express">Teeka Express</option>
                       <option value="Others">Others</option>
                     </select>
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label className="block font-semibold text-slate-800 mb-1">
+                      7b. लस वाहतूक करणाऱ्याचे नाव ({vaccineDeliveredBy} कर्मचारी / व्यक्तीचे पूर्ण नाव) *
+                    </label>
+                    <input
+                      required={isSessionHeld === 'Yes'}
+                      list="ri-active-staff-list"
+                      value={vaccineCarrierName}
+                      onChange={(e) => setVaccineCarrierName(e.target.value)}
+                      placeholder="उदा. ANM / AVD / लस वाहतूक करणाऱ्या व्यक्तीचे पूर्ण नाव"
+                      className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs bg-white"
+                    />
                   </div>
                 </div>
               </div>
@@ -987,7 +1199,7 @@ export const RiChecklistPage: React.FC = () => {
 
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs text-left">
-                    <thead className="bg-slate-100 text-slate-700 border-b border-slate-200">
+                    <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
                       <tr>
                         <th className="px-4 py-2.5 font-semibold">अ.क्र.</th>
                         <th className="px-4 py-2.5 font-semibold">Vaccine / Diluent</th>
@@ -1596,10 +1808,12 @@ export const RiChecklistPage: React.FC = () => {
                 className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-teal-700 hover:bg-teal-800 text-white text-sm font-semibold disabled:opacity-50"
               >
                 <Save className="w-4 h-4" />
-                {editItem ? 'RI चेकलिस्ट अद्यतनित करा' : 'RI चेकलिस्ट Google Sheet मध्ये जतन करा'}
+                {editItem ? 'RI चेकलिस्ट अद्यतनित करा' : 'RI चेकलिस्ट जतन करा'}
               </button>
             </div>
           </div>
+            </>
+          )}
         </form>
       ) : (
         /* Saved RI Checklists History Table */
@@ -1626,17 +1840,16 @@ export const RiChecklistPage: React.FC = () => {
           </div>
 
           {visibleChecklists.length === 0 ? (
-            <div className="p-8 text-center text-sm text-slate-500">
-              अद्याप एकही RI सत्र निरीक्षण यादी नोंदवलेली नाही. "नवीन चेकलिस्ट भरा" वर क्लिक करून पहिली नोंद करा.
-            </div>
+            <EmptyState message='अद्याप एकही RI सत्र निरीक्षण यादी नोंदवलेली नाही. "नवीन चेकलिस्ट भरा" वर क्लिक करून पहिली नोंद करा.' />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-xs text-left">
-                <thead className="bg-slate-100 text-slate-700 border-b border-slate-200">
+                <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
                   <tr>
                     <th className="px-4 py-3 font-semibold">कोड व दिनांक</th>
                     <th className="px-4 py-3 font-semibold">उपकेंद्र व सत्र ठिकाण</th>
-                    <th className="px-4 py-3 font-semibold">निरीक्षक (Monitor)</th>
+                    <th className="px-4 py-3 font-semibold">चेकलिस्ट कर्मचारी व निरीक्षक</th>
+                    <th className="px-4 py-3 font-semibold">लस वाहतूक</th>
                     <th className="px-4 py-3 font-semibold">सत्र स्थिती</th>
                     <th className="px-4 py-3 font-semibold">लस (PCV/IPV सह)</th>
                     <th className="px-4 py-3 font-semibold">लॉजिस्टिक्स</th>
@@ -1646,6 +1859,10 @@ export const RiChecklistPage: React.FC = () => {
                 <tbody className="divide-y divide-slate-100">
                   {visibleChecklists.map((c) => {
                     const stats = computeRiChecklistCounts(c);
+                    const linkedSes = c.sessionId
+                      ? db.vaccinationSessions.find((s) => s.id === c.sessionId) || null
+                      : null;
+                    const linkedClosed = Boolean(linkedSes && !getSessionEditStatus(linkedSes).isOpen);
                     return (
                       <tr key={c.id} className="hover:bg-slate-50">
                         <td className="px-4 py-3 whitespace-nowrap">
@@ -1663,10 +1880,18 @@ export const RiChecklistPage: React.FC = () => {
                           </div>
                         </td>
                         <td className="px-4 py-3">
-                          <div className="font-medium text-slate-900">{c.monitorName}</div>
-                          <div className="text-slate-500">
-                            {c.designation} · {c.organization}
+                          <div className="font-medium text-slate-900">
+                            कर्मचारी: {c.checklistStaffName || c.monitorName || '-'}
                           </div>
+                          <div className="text-slate-500">
+                            निरीक्षक: {c.monitorName} ({c.designation} · {c.organization})
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="font-medium text-slate-900">
+                            {c.vaccineCarrierName || '-'}
+                          </div>
+                          <div className="text-slate-500">{c.vaccineDeliveredBy || '-'}</div>
                         </td>
                         <td className="px-4 py-3">
                           <span
@@ -1705,13 +1930,19 @@ export const RiChecklistPage: React.FC = () => {
                           )}
                         </td>
                         <td className="px-4 py-3 text-right whitespace-nowrap space-x-2">
-                          <button
-                            type="button"
-                            onClick={() => loadForEdit(c)}
-                            className="inline-flex items-center gap-1 text-teal-700 font-medium hover:underline"
-                          >
-                            <Edit className="w-3.5 h-3.5" /> संपादन
-                          </button>
+                          {linkedClosed ? (
+                            <span className="inline-flex items-center gap-1 text-slate-500 font-medium">
+                              <Lock className="w-3 h-3" /> सत्र बंद
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => loadForEdit(c)}
+                              className="inline-flex items-center gap-1 text-teal-700 font-medium hover:underline"
+                            >
+                              <Edit className="w-3.5 h-3.5" /> संपादन
+                            </button>
+                          )}
                           <button
                             type="button"
                             disabled={pdfBusyId === c.id}
@@ -1750,9 +1981,9 @@ export const RiChecklistPage: React.FC = () => {
         title={
           editItem
             ? `RI चेकलिस्ट (${editItem.checklistCode}) अद्यतनित करायची का?`
-            : 'नवीन RI चेकलिस्ट Google Sheet मध्ये जतन करायची का?'
+            : 'नवीन RI चेकलिस्ट जतन करायची का?'
         }
-        description={`निरीक्षक: ${monitorName} · दिनांक: ${formatDDMMYYYY(monitoringDate)} · ठिकाण: ${sessionSiteName} · सत्र स्थिती: ${isSessionHeld}`}
+        description={`चेकलिस्ट कर्मचारी: ${checklistStaffName} · निरीक्षक: ${monitorName} · लस वाहतूक: ${vaccineDeliveredBy}${vaccineCarrierName ? ` (${vaccineCarrierName})` : ''} · दिनांक: ${formatDDMMYYYY(monitoringDate)} · ठिकाण: ${sessionSiteName} · सत्र स्थिती: ${isSessionHeld}`}
         confirmLabel="होय, जतन करा"
         loading={busy}
         onConfirm={handleConfirmSave}

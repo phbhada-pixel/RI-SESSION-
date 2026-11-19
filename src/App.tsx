@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { SheetDataProvider, useSheetData } from './context/SheetDataContext';
 import { Layout } from './components/Layout';
 import { LoginPage } from './pages/LoginPage';
@@ -7,6 +7,8 @@ import { DashboardPage } from './pages/DashboardPage';
 import { BeneficiaryRegistrationPage } from './pages/BeneficiaryRegistrationPage';
 import { BeneficiaryListPage } from './pages/BeneficiaryListPage';
 import { PregnantWomenPage } from './pages/PregnantWomenPage';
+import { MaternalProfilePage } from './pages/MaternalProfilePage';
+import { MaternalDashboardPage } from './pages/MaternalDashboardPage';
 import { BeneficiaryHistoryPage } from './pages/BeneficiaryHistoryPage';
 import { DueVaccinationPage } from './pages/DueVaccinationPage';
 import { SessionManagementPage } from './pages/SessionManagementPage';
@@ -54,6 +56,7 @@ const AppShell: React.FC = () => {
     <Layout>
       <Routes>
         <Route path="/" element={<DashboardPage />} />
+        <Route path="/maternal-dashboard" element={<MaternalDashboardPage />} />
         <Route
           path="/beneficiaries/register"
           element={
@@ -64,6 +67,7 @@ const AppShell: React.FC = () => {
         />
         <Route path="/beneficiaries" element={<BeneficiaryListPage />} />
         <Route path="/pregnant-women" element={<PregnantWomenPage />} />
+        <Route path="/pregnant-women/:beneficiaryId" element={<MaternalProfilePage />} />
         <Route path="/sessions" element={<SessionManagementPage />} />
         <Route path="/today-session" element={<TodaySessionPage />} />
         <Route path="/session-search" element={<SessionBeneficiarySearchPage />} />
@@ -134,12 +138,53 @@ const AppShell: React.FC = () => {
   );
 };
 
+class AppErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { error: Error | null }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6">
+          <div className="max-w-md w-full bg-white border border-rose-200 rounded-xl p-6 shadow-sm space-y-3">
+            <h1 className="text-base font-bold text-rose-800">
+              प्रणाली लोड करताना तांत्रिक अडचण आली
+            </h1>
+            <p className="text-xs text-slate-600 break-words">
+              {this.state.error.message || 'अपेक्षित नसलेली त्रुटी आली आहे.'}
+            </p>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="px-4 py-2 text-xs font-semibold rounded-lg bg-teal-700 text-white hover:bg-teal-800"
+            >
+              पृष्ठ पुन्हा लोड करा
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function App() {
   return (
-    <BrowserRouter>
-      <SheetDataProvider>
-        <AppShell />
-      </SheetDataProvider>
-    </BrowserRouter>
+    <AppErrorBoundary>
+      <HashRouter>
+        <SheetDataProvider>
+          <AppShell />
+        </SheetDataProvider>
+      </HashRouter>
+    </AppErrorBoundary>
   );
 }

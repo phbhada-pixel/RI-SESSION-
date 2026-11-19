@@ -1,12 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CalendarPlus, Lock, Unlock, CheckSquare, Search, ClipboardCheck, ClipboardList } from 'lucide-react';
+import { CalendarPlus, CheckCircle2, Lock, Unlock, CheckSquare, Search, ClipboardCheck, ClipboardList } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useSheetData } from '../context/SheetDataContext';
-import { SessionCategory, SessionStatus, SessionType, VaccinationSession } from '../types';
+import { RiChecklist, SessionCategory, SessionStatus, SessionType, VaccinationSession } from '../types';
 import { formatDDMMYYYY, getSessionEditStatus, getTodayIST } from '../utils/dateUtils';
 import { formatDateTimeIST } from '../utils/localeUtils';
 import { SearchableSelect } from '../components/SearchableSelect';
 import { ConfirmModal } from '../components/ConfirmModal';
+import { EmptyState } from '../components/EmptyState';
+import { PageHeader } from '../components/PageHeader';
 import { Toast } from '../components/Toast';
 
 export const SessionManagementPage: React.FC = () => {
@@ -113,6 +115,17 @@ export const SessionManagementPage: React.FC = () => {
       : db.vaccinationSessions;
   }, [db, scopedSubcentre]);
 
+  const riChecklistBySessionId = useMemo(() => {
+    const map = new Map<string, RiChecklist>();
+    if (!db) return map;
+    for (const c of db.riChecklists) {
+      if (c.sessionId && !map.has(c.sessionId)) {
+        map.set(c.sessionId, c);
+      }
+    }
+    return map;
+  }, [db]);
+
   if (!db) return null;
 
   const canCreate = Boolean(
@@ -150,7 +163,7 @@ export const SessionManagementPage: React.FC = () => {
         status: 'नियोजित',
       });
       setToast({
-        msg: `लसीकरण सत्र Google Sheet मध्ये तयार झाले: ${created.sessionCode}`,
+        msg: `लसीकरण सत्र तयार झाले: ${created.sessionCode}`,
         type: 'success',
       });
       setConfirmCreateOpen(false);
@@ -170,7 +183,7 @@ export const SessionManagementPage: React.FC = () => {
       } else {
         await updateSession(statusTarget.session.id, { status: statusTarget.nextStatus });
       }
-      setToast({ msg: 'सत्राची स्थिती Google Sheet मध्ये अद्यतनित केली.', type: 'success' });
+      setToast({ msg: 'सत्राची स्थिती अद्यतनित केली.', type: 'success' });
       setStatusTarget(null);
     } catch (err) {
       setToast({ msg: err instanceof Error ? err.message : 'त्रुटी आली.', type: 'error' });
@@ -201,20 +214,18 @@ export const SessionManagementPage: React.FC = () => {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-xl font-bold text-slate-900">लसीकरण सत्र व्यवस्थापन</h2>
-        <p className="text-xs text-slate-500">
-          सत्र तारखेनंतर २ दिवसांपर्यंत (IST रात्री ११:५९ पर्यंत) अद्यतने सुरू राहतात; त्यानंतर सत्र स्वयंचलित लॉक होते.
-        </p>
-      </div>
+    <div className="app-page">
+      <PageHeader
+        title="लसीकरण सत्र व्यवस्थापन"
+        subtitle="सत्र तारखेनंतर २ दिवसांपर्यंत (IST रात्री ११:५९ पर्यंत) अद्यतने सुरू राहतात; त्यानंतर सत्र स्वयंचलित लॉक होते."
+      />
 
       {canCreate && (
         <form
           onSubmit={handleCreateSubmit}
-          className="bg-white p-5 rounded-xl border border-slate-200 space-y-4"
+          className="app-card app-card-body space-y-4"
         >
-          <div className="flex items-center gap-2 text-sm font-bold text-slate-800">
+          <div className="app-section-title">
             <CalendarPlus className="w-4 h-4 text-teal-700" /> नवीन लसीकरण सत्र तयार करा
           </div>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -452,10 +463,7 @@ export const SessionManagementPage: React.FC = () => {
             </div>
           )}
           <div>
-            <button
-              type="submit"
-              className="px-5 py-2.5 rounded-lg bg-teal-700 hover:bg-teal-800 text-white text-sm font-semibold"
-            >
+            <button type="submit" className="app-btn-primary py-2.5">
               सत्र तयार करा
             </button>
           </div>
@@ -463,29 +471,27 @@ export const SessionManagementPage: React.FC = () => {
       )}
 
       {/* Sessions Table */}
-      <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto">
+      <div className="app-table-wrap">
         {visibleSessions.length === 0 ? (
-          <div className="p-8 text-center text-sm text-slate-500">
-            कोणतेही लसीकरण सत्र नोंदवलेले नाही. वरील फॉर्मद्वारे नवीन सत्र तयार करा.
-          </div>
+          <EmptyState message="कोणतेही लसीकरण सत्र नोंदवलेले नाही. वरील फॉर्मद्वारे नवीन सत्र तयार करा." />
         ) : (
-          <table className="w-full text-sm text-left">
-            <thead className="bg-slate-50 text-slate-600 text-xs border-b border-slate-200">
+          <table className="app-table">
+            <thead className="app-thead">
               <tr>
-                <th className="px-4 py-3 font-semibold">सत्र कोड</th>
-                <th className="px-4 py-3 font-semibold">दिनांक व ठिकाण</th>
-                <th className="px-4 py-3 font-semibold">उपकेंद्र / गाव</th>
-                <th className="px-4 py-3 font-semibold">ANM / CHO</th>
-                <th className="px-4 py-3 font-semibold text-right">लाभार्थी</th>
-                <th className="px-4 py-3 font-semibold">स्थिती व २-दिवस मुदत</th>
-                <th className="px-4 py-3 font-semibold text-right">कृती</th>
+                <th className="app-th">सत्र कोड</th>
+                <th className="app-th">दिनांक व ठिकाण</th>
+                <th className="app-th">उपकेंद्र / गाव</th>
+                <th className="app-th">ANM / CHO</th>
+                <th className="app-th text-right">लाभार्थी</th>
+                <th className="app-th">स्थिती व २-दिवस मुदत</th>
+                <th className="app-th text-right">कृती</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {visibleSessions.map((s) => {
                 const win = getSessionEditStatus(s);
                 return (
-                  <tr key={s.id} className="hover:bg-slate-50">
+                  <tr key={s.id} className="hover:bg-slate-50/80 transition-colors">
                     <td className="px-4 py-3 font-mono-tabular text-xs font-semibold text-teal-800 whitespace-nowrap">
                       {s.sessionCode}
                       <div className="text-slate-500 font-sans font-normal">
@@ -555,12 +561,25 @@ export const SessionManagementPage: React.FC = () => {
                       >
                         <CheckSquare className="w-3.5 h-3.5" /> टिकमार्क शीट
                       </Link>
-                      <Link
-                        to={`/ri-checklist?sessionId=${s.id}`}
-                        className="inline-flex items-center gap-1 text-xs font-medium text-teal-700 hover:underline"
-                      >
-                        <ClipboardList className="w-3.5 h-3.5" /> RI चेकलिस्ट
-                      </Link>
+                      {(() => {
+                        const existingRi = riChecklistBySessionId.get(s.id);
+                        return existingRi ? (
+                          <Link
+                            to={`/ri-checklist?sessionId=${s.id}`}
+                            className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 hover:underline"
+                            title="या सत्राची RI चेकलिस्ट आधीच भरलेली आहे (पहा / संपादित करा)"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5" /> RI पूर्ण ({existingRi.checklistCode})
+                          </Link>
+                        ) : (
+                          <Link
+                            to={`/ri-checklist?sessionId=${s.id}`}
+                            className="inline-flex items-center gap-1 text-xs font-medium text-teal-700 hover:underline"
+                          >
+                            <ClipboardList className="w-3.5 h-3.5" /> RI चेकलिस्ट भरा
+                          </Link>
+                        );
+                      })()}
                       {win.isOpen && s.status === 'नियोजित' && (
                         <button
                           type="button"
@@ -608,7 +627,7 @@ export const SessionManagementPage: React.FC = () => {
 
       <ConfirmModal
         open={confirmCreateOpen}
-        title="नवीन लसीकरण सत्र Google Sheet मध्ये जतन करायचे का?"
+        title="नवीन लसीकरण सत्र जतन करायचे का?"
         description={`दिनांक: ${formatDDMMYYYY(sessionDate)} · ठिकाण: ${location} · आरोग्य सेविका (ANM): ${anmName}${
           choName ? ` · CHO: ${choName}` : ''
         }${otherStaff ? ` · आरोग्य कर्मचारी: ${otherStaff}` : ''}`}
@@ -621,7 +640,7 @@ export const SessionManagementPage: React.FC = () => {
       <ConfirmModal
         open={Boolean(statusTarget)}
         title="सत्राची स्थिती बदलायची का?"
-        description={`सत्र ${statusTarget?.session.sessionCode} ची स्थिती '${statusTarget?.nextStatus}' म्हणून Google Sheet मध्ये नोंदवली जाईल.`}
+        description={`सत्र ${statusTarget?.session.sessionCode} ची स्थिती '${statusTarget?.nextStatus}' म्हणून नोंदवली जाईल.`}
         confirmLabel="होय, अद्यतनित करा"
         loading={busy}
         onConfirm={handleConfirmStatusChange}
@@ -629,26 +648,17 @@ export const SessionManagementPage: React.FC = () => {
       />
 
       {reopenTarget && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
-          role="dialog"
-          aria-modal="true"
-        >
-          <form
-            onSubmit={handleConfirmReopen}
-            className="w-full max-w-md bg-white rounded-xl border border-slate-200 shadow-xl p-5 space-y-4"
-          >
+        <div className="app-modal-backdrop" role="dialog" aria-modal="true">
+          <form onSubmit={handleConfirmReopen} className="app-modal max-w-md p-5 space-y-4">
             <h3 className="text-base font-bold text-slate-900">
               लॉक केलेले सत्र पुन्हा उघडा ({reopenTarget.sessionCode})
             </h3>
             <div>
-              <label className="block text-xs font-medium text-slate-700 mb-1">
-                किती तासांसाठी उघडे ठेवायचे?
-              </label>
+              <label className="app-label">किती तासांसाठी उघडे ठेवायचे?</label>
               <select
                 value={reopenHours}
                 onChange={(e) => setReopenHours(Number(e.target.value))}
-                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white"
+                className="app-input"
               >
                 <option value={12}>१२ तास</option>
                 <option value={24}>२४ तास</option>
@@ -656,7 +666,7 @@ export const SessionManagementPage: React.FC = () => {
               </select>
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-700 mb-1">
+              <label className="app-label">
                 पुन्हा उघडण्याचे कारण (Audit Log साठी अनिवार्य) *
               </label>
               <textarea
@@ -664,23 +674,23 @@ export const SessionManagementPage: React.FC = () => {
                 rows={3}
                 value={reopenReason}
                 onChange={(e) => setReopenReason(e.target.value)}
-                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                className="app-input"
                 placeholder="कारण लिहा..."
               />
             </div>
-            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
               <button
                 type="button"
                 disabled={busy}
                 onClick={() => setReopenTarget(null)}
-                className="px-4 py-2 text-sm border border-slate-300 rounded-lg"
+                className="app-btn-secondary"
               >
                 रद्द करा
               </button>
               <button
                 type="submit"
                 disabled={busy}
-                className="px-4 py-2 text-sm font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg"
+                className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg whitespace-nowrap shrink-0 transition-colors"
               >
                 {busy ? 'उघडत आहे...' : 'सत्र पुन्हा उघडा'}
               </button>

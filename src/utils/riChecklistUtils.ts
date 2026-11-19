@@ -265,6 +265,7 @@ export function exportRiChecklistExcel(item: RiChecklist): void {
     ['चेकलिस्ट कोड', item.checklistCode],
     ['सत्र कोड (संलग्न असल्यास)', item.sessionCode || '-'],
     ['निरीक्षणाचा दिनांक', formatDDMMYYYY(item.monitoringDate)],
+    ['चेकलिस्ट करणारा कर्मचारी नाव', item.checklistStaffName || item.monitorName || '-'],
     ['निरीक्षकाचे नाव (Monitor)', item.monitorName],
     [
       'संस्था (Organization)',
@@ -297,7 +298,13 @@ export function exportRiChecklistExcel(item: RiChecklist): void {
     ['4. Due list मोबिलायझरकडे आहे का?', item.dueListWithMobiliser || '-'],
     ['5. मोबिलायझर मुलांना सत्रात आणत आहे का?', item.mobilizerMobilizing || '-'],
     ['6. Polio HRA टॅग आहे का?', item.polioHraTagged || '-'],
-    ['7. लस व लॉजिस्टिक्स कोणी पोहोचवले?', item.vaccineDeliveredBy || '-'],
+    [
+      '7. लस व लॉजिस्टिक्स वाहतूक कोणी केली?',
+      item.vaccineDeliveredBy
+        ? `${item.vaccineDeliveredBy}${item.vaccineCarrierName ? ` · नाव: ${item.vaccineCarrierName}` : ''}`
+        : item.vaccineCarrierName || '-',
+    ],
+    ['7b. लस वाहतूक करणाऱ्याचे नाव', item.vaccineCarrierName || '-'],
     ['10. वापरानंतर लगेच Hub Cutter ने सुई कापली जाते का?', item.cuttingWithHubCutter || '-'],
     ['10b. नाही असल्यास कारण', item.hubCutterNoReason || '-'],
     ['11. सर्व व्हायल्सवर दिनांक व वेळ नोंदवलेली आहे का?', item.markingVialsDateTime || '-'],
@@ -591,8 +598,8 @@ export async function downloadRiChecklistPDF(item: RiChecklist): Promise<void> {
     [1.3, 1.9, 1.3, 1.9],
     [
       [
-        'Monitor Name / Org',
-        `${item.monitorName} (${item.organization}${item.organizationOther ? `: ${item.organizationOther}` : ''})`,
+        'Checklist Staff / Monitor',
+        `${item.checklistStaffName || item.monitorName || '-'} · Monitor: ${item.monitorName} (${item.organization}${item.organizationOther ? `: ${item.organizationOther}` : ''})`,
         'Designation / Date',
         `${item.designation || '-'} · ${formatDDMMYYYY(item.monitoringDate)}`,
       ],
@@ -642,7 +649,13 @@ export async function downloadRiChecklistPDF(item: RiChecklist): Promise<void> {
       ['4', 'If due list available, is it with the mobiliser?', item.dueListWithMobiliser || '-'],
       ['5', 'Is mobilizer mobilizing the children to session site?', item.mobilizerMobilizing || '-'],
       ['6', 'Is any polio HRA tagged to this site?', item.polioHraTagged || '-'],
-      ['7', 'Who delivered vaccine / logistics to the site?', item.vaccineDeliveredBy || '-'],
+      [
+        '7',
+        'Who delivered vaccine / logistics to the site? (लस वाहतूक कोणी केली व नाव)',
+        `${item.vaccineDeliveredBy || '-'}${
+          item.vaccineCarrierName ? ` · नाव: ${item.vaccineCarrierName}` : ''
+        }`,
+      ],
     ]
   );
 

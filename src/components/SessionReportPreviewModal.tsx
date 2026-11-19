@@ -116,7 +116,7 @@ export const SessionReportPreviewModal: React.FC<SessionReportPreviewModalProps>
       aria-modal="true"
       aria-label="लसीकरण सत्र सविस्तर अहवाल पूर्वावलोकन"
     >
-      <div className="w-full max-w-6xl max-h-[92vh] bg-white rounded-xl border border-slate-200 shadow-2xl flex flex-col overflow-hidden">
+      <div className="w-full max-w-6xl max-h-[92vh] bg-white rounded-xl border border-slate-200 shadow-lg flex flex-col overflow-hidden">
         {/* Top Action Bar */}
         <div className="px-4 md:px-6 py-3.5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -126,14 +126,14 @@ export const SessionReportPreviewModal: React.FC<SessionReportPreviewModalProps>
                 : `बालक लसीकरण सत्र अहवाल पूर्वावलोकन (${session.sessionCode})`}
             </h3>
             <p className="text-xs text-slate-500">
-              A4 आकार · मराठी युनिकोड फॉन्ट · Google Sheet वरून थेट संकलित डेटा (आधार संरक्षित)
+              A4 आकार · मराठी युनिकोड फॉन्ट · संकलित सत्र अहवाल (आधार संरक्षित)
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={handleDownloadExcel}
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 whitespace-nowrap"
+              className="app-btn-secondary"
             >
               <FileSpreadsheet className="w-4 h-4 text-emerald-700" /> Excel डाउनलोड करा
             </button>
@@ -141,7 +141,7 @@ export const SessionReportPreviewModal: React.FC<SessionReportPreviewModalProps>
               type="button"
               disabled={pdfBusy}
               onClick={handlePrintPdf}
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 whitespace-nowrap disabled:opacity-50"
+              className="app-btn-secondary"
             >
               <Printer className="w-4 h-4" /> प्रिंट करा (Print PDF)
             </button>
@@ -149,7 +149,7 @@ export const SessionReportPreviewModal: React.FC<SessionReportPreviewModalProps>
               type="button"
               disabled={pdfBusy}
               onClick={handleDownloadPdf}
-              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg whitespace-nowrap disabled:opacity-50"
+              className="app-btn-primary"
             >
               <Download className="w-4 h-4" />
               {pdfBusy
@@ -219,7 +219,7 @@ export const SessionReportPreviewModal: React.FC<SessionReportPreviewModalProps>
               </h4>
               <div className="overflow-x-auto border border-slate-200 rounded-lg">
                 <table className="w-full text-xs text-left">
-                  <thead className="bg-slate-100 text-slate-700 border-b border-slate-200">
+                  <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
                     <tr>
                       <th className="px-2.5 py-2 font-semibold text-center">अ.क्र.</th>
                       <th className="px-2.5 py-2 font-semibold">माता आयडी</th>
@@ -302,7 +302,7 @@ export const SessionReportPreviewModal: React.FC<SessionReportPreviewModalProps>
               </h4>
               <div className="overflow-x-auto border border-slate-200 rounded-lg">
                 <table className="w-full text-xs text-left">
-                  <thead className="bg-slate-100 text-slate-700 border-b border-slate-200">
+                  <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
                     <tr>
                       <th className="px-2.5 py-2 font-semibold text-center">अ.क्र.</th>
                       <th className="px-2.5 py-2 font-semibold">मातेचे नाव व प्रकरण आयडी</th>
@@ -421,7 +421,7 @@ export const SessionReportPreviewModal: React.FC<SessionReportPreviewModalProps>
                   ANC सेवानिहाय संख्या गोषवारा
                 </h4>
                 <table className="w-full text-xs border border-slate-200 rounded-lg overflow-hidden">
-                  <thead className="bg-slate-100 text-slate-700 border-b border-slate-200">
+                  <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
                     <tr>
                       <th className="px-3 py-2 font-semibold text-left">ANC सेवा</th>
                       <th className="px-3 py-2 font-semibold text-right">संख्या</th>
@@ -523,7 +523,7 @@ export const SessionReportPreviewModal: React.FC<SessionReportPreviewModalProps>
                 </h4>
                 <div className="overflow-x-auto border border-slate-200 rounded-lg">
                   <table className="w-full text-xs text-left">
-                    <thead className="bg-slate-100 text-slate-700 border-b border-slate-200">
+                    <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
                       <tr>
                         <th className="px-2.5 py-2 font-semibold text-center">अ.क्र.</th>
                         <th className="px-2.5 py-2 font-semibold">लाभार्थी आयडी</th>
@@ -598,7 +598,7 @@ export const SessionReportPreviewModal: React.FC<SessionReportPreviewModalProps>
                 </h4>
                 <div className="overflow-x-auto border border-slate-200 rounded-lg">
                   <table className="w-full text-xs text-left">
-                    <thead className="bg-slate-100 text-slate-700 border-b border-slate-200">
+                    <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
                       <tr>
                         <th className="px-2.5 py-2 font-semibold text-center">अ.क्र.</th>
                         <th className="px-2.5 py-2 font-semibold">लाभार्थी नाव व आयडी</th>
@@ -727,7 +727,7 @@ export const SessionReportPreviewModal: React.FC<SessionReportPreviewModalProps>
                     लस व डोसनिहाय गोषवारा
                   </h4>
                   <table className="w-full text-xs border border-slate-200 rounded-lg overflow-hidden">
-                    <thead className="bg-slate-100 text-slate-700 border-b border-slate-200">
+                    <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
                       <tr>
                         <th className="px-3 py-2 font-semibold text-left">लसीचे नाव</th>
                         <th className="px-3 py-2 font-semibold text-left">डोस</th>
